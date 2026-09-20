@@ -358,6 +358,24 @@
   .footer-link:hover { text-decoration: underline; }
   .brandbar a { line-height: 0; }
 
+  .promo-video {
+    display: block;
+    margin-top: 26px;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    line-height: 0;
+  }
+  .promo-video video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: var(--surface-2);
+  }
+
   @media (max-width: 480px) {
     .card-head, .card-body { padding-left: 22px; padding-right: 22px; }
   }
@@ -403,6 +421,12 @@
     SNEP shfaq vetëm ecurinë e dërgesës — jo emrin, telefonin apo vlerën. Problem me porosinë? Na kontakto direkt.<br>
     <a href="https://www.mysnep.com/" target="_blank" rel="noopener" class="footer-link">Zbulo më shumë rreth SNEP →</a>
   </footer>
+
+  <a class="promo-video" href="https://www.mysnep.com/" target="_blank" rel="noopener" aria-label="SNEP - mysnep.com">
+    <video autoplay muted loop playsinline preload="metadata">
+      <source src="https://www.mysnep.com/images/snep_home2.mp4" type="video/mp4">
+    </video>
+  </a>
 </div>
 
 <script>
