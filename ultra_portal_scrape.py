@@ -574,6 +574,39 @@ def upsert_seen_parcel(barcode: str, order_number: str, list_updated_raw: str, a
     resp.raise_for_status()
 
 
+def cleanup_old_events():
+    """
+    Fshin nga 'tracking_events' te gjitha ngjarjet e nje porosie, NESE
+    ngjarja e saj e FUNDIT (me e reja) eshte me e vjeter se 30 dite -- qe te
+    mos e mbushim kot databazen me porosi te vjetra qe askush s'i kerkon me.
+
+    E gjithe logjika (cila porosi "ka kaluar 30 dite") eshte ne funksionin
+    SQL 'cleanup_old_tracking_events' (shiko supabase_schema.sql) -- ketu
+    thjesht e thirrim permes RPC-se, njesoj si funksionet e tjera te
+    Supabase. Rreshti perkates ne 'ultra_parcels_seen' NUK fshihet -- mbetet
+    aty (active=false, e pandryshuar) qe skanimi i ardhshem te vazhdoje ta
+    ANASHKALOJE pakon e vjeter, ne vend qe ta rizbuloje si "te re" dhe ta
+    rifuse serish ne tracking_events.
+    """
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+    resp = requests.post(
+        f"{supabase_url}/rest/v1/rpc/cleanup_old_tracking_events",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+        },
+        json={},
+        timeout=30,
+    )
+    if not resp.ok:
+        print(f"  -> (kujdes: pastrimi i te dhenave te vjetra deshtoi -- {resp.status_code}: {resp.text})")
+    else:
+        print("Pastrimi i porosive mbi 30 dite u krye.")
+
+
 def scan_all_parcels(driver, full_scan: bool = False) -> list:
     """
     Shkon te lista e PLOTE e pakove (pa filtruar me numer porosie te
@@ -827,3 +860,9 @@ if __name__ == "__main__":
             driver.quit()
 
         print(f"U sinkronizuan {len(rezultatet)} pako (te reja ose te ndryshuara).")
+
+        if full_scan:
+            # Pastrimi behet vetem 1 here ne dite (bashke me skanimin e
+            # plote) -- s'ka nevoje ta xhirojme cdo 15 min, sepse eshte
+            # thjesht mirembajtje, jo dicka urgjente.
+            cleanup_old_events()
