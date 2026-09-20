@@ -439,6 +439,30 @@ def _mbyll_detajet_pakos(driver):
         time.sleep(0.4)
     except TimeoutException:
         print("  (kujdes: s'u gjet dot butoni 'Mbyll' -- vazhdoj gjithsesi)")
+    _pastro_panelin_e_detajeve(driver)
+
+
+def _pastro_panelin_e_detajeve(driver):
+    """
+    RREGULLIM I RENDESISHEM (20/09/2026): pastron plotesisht panelin e
+    detajeve te pakos (#parcel-details-wrapper) PARA se te hapim nje pako
+    te re.
+
+    Pa kete, u zbulua nje bug real: nese permbajtja e VJETER (nga pakoja e
+    kaluar) mbetet ende ne DOM kur klikojme pakon TJETER, `wait.until(...)`
+    per seksionin "Gjurmimi" mund te PLOTESOHET MENJEHERE nga elementet e
+    VJETRA (qe jane ende ne DOM, thjesht te fshehura), PARA se AJAX-i i ri
+    te kete mbaruar -- duke shkaktuar qe numri i porosise/ngjarjet e nje
+    pakoje t'i "ngjiten" gabimisht nje pakoje tjeter (rreshta te gabuar ne
+    Supabase). Duke e zbrazur vete `innerHTML`-in ketu (permes JS), garantojme
+    qe "wait.until" te mos plotesohet kurre nga permbajtja e vjeter.
+    """
+    try:
+        driver.execute_script(
+            "var w = document.getElementById('parcel-details-wrapper'); if (w) { w.innerHTML = ''; }"
+        )
+    except Exception:
+        pass
 
 
 def fetch_seen_parcels() -> dict:
@@ -563,7 +587,10 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
 
             streak_te_panevojshme = 0
 
-            # duhet ta hapim -- klikojme badge-in dhe presim ngarkimin e Gjurmimit
+            # duhet ta hapim -- pastro cdo permbajtje te vjeter TE MBETUR ne
+            # panel PARA klikimit (shih shenimin te _pastro_panelin_e_detajeve),
+            # pastaj klikojme badge-in dhe presim ngarkimin e Gjurmimit TE RI
+            _pastro_panelin_e_detajeve(driver)
             try:
                 badge.click()
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
