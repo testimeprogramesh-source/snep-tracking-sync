@@ -1,0 +1,36 @@
+name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
+
+# Xhiron automatikisht cdo 15 minuta, dhe mund te xhirohet edhe manualisht
+# nga skeda "Actions" e repository-t (buton "Run workflow").
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Merr kodin e repository-t
+        uses: actions/checkout@v4
+
+      - name: Instalo Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalo Chrome (per Selenium)
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Instalo varesite Python
+        run: pip install selenium webdriver-manager requests
+
+      - name: Xhiro sinkronizimin (lexon vete porosite aktive nga Supabase)
+        env:
+          ULTRA_USERNAME: ${{ secrets.ULTRA_USERNAME }}
+          ULTRA_PASSWORD: ${{ secrets.ULTRA_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python ultra_portal_scrape.py
