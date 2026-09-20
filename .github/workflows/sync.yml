@@ -23,9 +23,13 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # 45 min, sepse skanimi i PLOTE (dhe sidomos xhirimi i pare, "backfill"-i
-    # historik) mund te marre shume me shume kohe se nje skanim i shpejte.
-    timeout-minutes: 45
+    # 180 min (3 ore): skanimi i PLOTE i pare ("backfill"-i, ~30 dite histori
+    # me 50+/dite = ~1500 pako per t'u hapur nje-nga-nje) mund te marre me
+    # shume se 45 min. 45 min DESHTOI ne praktike (20/09/2026) -- u rrit.
+    # Xhirimet e ardhshme te plota do te jene MË TE SHPEJTA (shumica e
+    # pakove tashme jane "seen" -- shih ultra_parcels_seen), keshtu qe ky
+    # kufi i larte praktikisht s'do te arrihet me pas backfill-it te pare.
+    timeout-minutes: 180
 
     steps:
       - name: Merr kodin e repository-t
