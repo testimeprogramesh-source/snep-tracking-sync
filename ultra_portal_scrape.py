@@ -102,6 +102,7 @@ biznesit te SNEP ne portal.
 """
 
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -109,7 +110,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -136,6 +137,22 @@ SELEKTOR_FILTER_ACCORDION = "button.accordion-button"     # hap panelin "Filtër
 ID_FUSHA_NUMER_POROSIE = "filter_invoice_number"           # "Numri Faturës"
 ID_BUTONI_APLIKO_FILTER = "apply_filter_button"             # <a>, jo <button>
 SELEKTOR_PAKO_DETAJE = "span.view-parcel-details"          # badge-i i barkodit -- hap detajet e pakos (AJAX, jo <a>)
+
+# ------------------------------------------------------------------
+# 2b) SKANIMI AUTOMATIK I TE GJITHA PAKOVE (pa listë manuale porosish) --
+#     VERIFIKUAR nga HTML-i real i portalit (paging jQuery DataTables
+#     standarde): #parcels_datatable_length (madhesia e faqes),
+#     #parcels_datatable_next (faqja tjeter), #parcels_datatable tbody tr
+#     (rreshtat). Butoni "Mbyll" u konfirmua nga nje foto ekrani reale.
+# ------------------------------------------------------------------
+SELEKTOR_GJATESIA_FAQES = "select[name='parcels_datatable_length']"
+ID_BUTONI_FAQJA_TJETER = "parcels_datatable_next"
+SELEKTOR_RRESHT_TABELE = "#parcels_datatable tbody tr"
+SELEKTOR_BUTONI_MBYLL_DETAJET = (
+    "//button[contains(normalize-space(.), 'Mbyll')] | //a[contains(normalize-space(.), 'Mbyll')]"
+)
+MAX_FAQE_SKANIM = 150       # kufi sigurie -- s'kapërcejmë kurrë kaq shumë faqe (mbrojtje kundër loop-esh të pafundme)
+STREAK_NDALO_SKANIMIN = 50  # ne skanim JO te plote: ndalo pasi te hasesh kaq rreshta rradhazi tashme te njohur/te mbyllur/te pandryshuar
 
 # ------------------------------------------------------------------
 # 3) SELEKTORET E SEKSIONIT "GJURMIMI" -- VERIFIKUAR LIVE (3 pako te
@@ -390,6 +407,211 @@ def push_to_supabase(order_number: str, barcode: str, events: list):
     resp.raise_for_status()
 
 
+def _lexo_numrin_e_porosise(driver) -> str:
+    """
+    Lexon numrin e porosisë (Numri Faturës) nga paneli i HAPUR i detajeve
+    të pakos -- perdoret VETEM ne skanimin automatik te te gjitha pakove,
+    ku s'e dime paraprakisht numrin (ndryshe nga menyra me filter, ku e
+    kerkojme vete).
+
+    E VERIFIKUAR nga nje foto ekrani reale (20/09/2026): fusha "Numri
+    Faturës" ndonjehere permban 2 numra te ndare me hapesire (p.sh.
+    "3818985 227125581789661533") -- i pari eshte numri i vertete i
+    porosise se SNEP. Per te qene te fortë ndaj ndryshimeve te vogla te
+    HTML-it (s'kemi nje selektor CSS te konfirmuar per kete fushe), e
+    nxjerrim me regex nga i gjithe teksti i faqes, jo nga nje element i
+    caktuar. Rezervë: fusha "Shënimet" e formatit "Order #1234567".
+    """
+    teksti = driver.find_element(By.TAG_NAME, "body").text
+    m = re.search(r"Numri\s+Fatur[ëe]s\s*:?\s*(\d+)", teksti, re.IGNORECASE)
+    if not m:
+        m = re.search(r"Order\s*#\s*(\d+)", teksti)
+    return m.group(1) if m else ""
+
+
+def _mbyll_detajet_pakos(driver):
+    """Mbyll panelin e detajeve te pakos (buton 'Mbyll'), per t'u kthyer te lista."""
+    try:
+        mbyll = WebDriverWait(driver, 8).until(
+            EC.element_to_be_clickable((By.XPATH, SELEKTOR_BUTONI_MBYLL_DETAJET))
+        )
+        mbyll.click()
+        time.sleep(0.4)
+    except TimeoutException:
+        print("  (kujdes: s'u gjet dot butoni 'Mbyll' -- vazhdoj gjithsesi)")
+
+
+def fetch_seen_parcels() -> dict:
+    """
+    Lexon nga Supabase tabelen 'ultra_parcels_seen' -- kthen nje dictionary
+    {barcode: {"order_number":..., "list_updated_raw":..., "active":...}}
+    per te ditur SHPEJT (pa hapur çdo pako) cilat pako i njohim tashme dhe
+    s'kane ndryshuar qe nga hera e fundit.
+    """
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+    resp = requests.get(
+        f"{supabase_url}/rest/v1/ultra_parcels_seen",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+        },
+        params={"select": "barcode,order_number,list_updated_raw,active"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return {row["barcode"]: row for row in resp.json()}
+
+
+def upsert_seen_parcel(barcode: str, order_number: str, list_updated_raw: str, active: bool):
+    """Upsert 1 rresht ne 'ultra_parcels_seen' (gjendja e brendshme e skanimit)."""
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+    resp = requests.post(
+        f"{supabase_url}/rest/v1/ultra_parcels_seen",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        params={"on_conflict": "barcode"},
+        json=[{
+            "barcode": barcode,
+            "order_number": order_number,
+            "list_updated_raw": list_updated_raw,
+            "active": active,
+            "last_synced_at": datetime.now(timezone.utc).isoformat(),
+        }],
+        timeout=20,
+    )
+    if not resp.ok:
+        print(f"  -> Supabase (ultra_parcels_seen) ktheu {resp.status_code}: {resp.text}")
+    resp.raise_for_status()
+
+
+def scan_all_parcels(driver, full_scan: bool = False) -> list:
+    """
+    Shkon te lista e PLOTE e pakove (pa filtruar me numer porosie te
+    caktuar), e ven madhesine e faqes ne maksimum, dhe kalon faqe pas
+    faqeje (nga me te rejat tek me te vjetrat, sipas renditjes se
+    default-it te portalit). Per çdo pako:
+      - Nese eshte E RE (s'e kemi pare kurre) OSE ka NDRYSHUAR ("Koha e
+        Perditesimit" ndryshon nga hera e fundit qe e pame) -> hapim
+        detajet, lexojme numrin e porosise, nxjerrim Gjurmimin e plote,
+        dhe e ruajme (upsert) ne Supabase.
+      - Perndryshe (tashme e njohur, e pandryshuar, dhe e "mbyllur" --
+        d.m.th. tashme e dorezuar) -> e anashkalojme pa e hapur (kursen
+        kohe -- s'ka nevoje ta rikontrollojme diçka qe s'ka ndryshuar).
+
+    Ne menyren "full_scan=True" (skanim i plote, 1 here ne dite), s'ndalon
+    kurre me pare per "streak" -- kalon te GJITHA faqet (deri ne kufirin
+    e sigurise MAX_FAQE_SKANIM), per te kapur çdo pako qe menyra e shpejte
+    mund ta kete "harruar" (p.sh. nje pako shume e vjeter qe befas ndryshon).
+
+    Kthen listen e (order_number, barcode, events) per çdo pako qe u
+    sinkronizua realisht kete here (jo ato qe u anashkaluan).
+    """
+    seen = fetch_seen_parcels()
+    rezultatet = []
+    wait = WebDriverWait(driver, 25)
+
+    driver.get(URL_LISTA_PAKOVE)
+
+    # vendos madhesine e faqes ne maksimum, per te reduktuar numrin e faqeve
+    try:
+        gjatesia = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_GJATESIA_FAQES)))
+        Select(gjatesia).select_by_value("300")
+        time.sleep(1.5)  # DataTables rifreskon rreshtat permes AJAX pas ndryshimit te madhesise
+    except Exception as e:
+        print(f"  (kujdes: s'u vendos dot madhesia maksimale e faqes -- {e})")
+
+    streak_te_panevojshme = 0
+    faqe_nr = 1
+
+    while True:
+        rreshtat = driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_TABELE)
+        for rresht in rreshtat:
+            try:
+                badge = rresht.find_element(By.CSS_SELECTOR, SELEKTOR_PAKO_DETAJE)
+            except NoSuchElementException:
+                continue  # rresht placeholder ("Nuk u gjet asnje rezultat", etj.)
+
+            barcode = badge.text.strip()
+            if not barcode:
+                continue
+
+            try:
+                badges_koha = rresht.find_elements(By.CSS_SELECTOR, "td:nth-child(6) .badge")
+                koha_perditesuar = badges_koha[-1].text.strip() if badges_koha else ""
+            except Exception:
+                koha_perditesuar = ""
+
+            e_njohur = seen.get(barcode)
+            e_mbyllur_e_panryshuar = (
+                e_njohur is not None
+                and e_njohur.get("active") is False
+                and e_njohur.get("list_updated_raw") == koha_perditesuar
+            )
+
+            if e_mbyllur_e_panryshuar:
+                if not full_scan:
+                    streak_te_panevojshme += 1
+                continue
+
+            streak_te_panevojshme = 0
+
+            # duhet ta hapim -- klikojme badge-in dhe presim ngarkimin e Gjurmimit
+            try:
+                badge.click()
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
+            except TimeoutException:
+                print(f"  -> DESHTOI: pako {barcode} s'e shfaqi Gjurmimin pas klikimit.")
+                _ruaj_debug(driver, f"skan_{barcode}_pa_gjurmim")
+                _mbyll_detajet_pakos(driver)
+                continue
+
+            numer_porosie = _lexo_numrin_e_porosise(driver)
+            if not numer_porosie:
+                print(f"  -> KUJDES: pako {barcode} s'ka numer porosie te lexueshem -- anashkalohet.")
+                _ruaj_debug(driver, f"skan_{barcode}_pa_numer_porosie")
+                _mbyll_detajet_pakos(driver)
+                continue
+
+            ngjarjet = get_tracking_events(driver)
+            eshte_dorezuar = _eshte_dorezuar(ngjarjet)
+
+            push_to_supabase(numer_porosie, barcode, ngjarjet)
+            upsert_seen_parcel(barcode, numer_porosie, koha_perditesuar, active=not eshte_dorezuar)
+            seen[barcode] = {"order_number": numer_porosie, "list_updated_raw": koha_perditesuar, "active": not eshte_dorezuar}
+            rezultatet.append((numer_porosie, barcode, ngjarjet))
+            print(f"  Pako {barcode} (porosia {numer_porosie}): {len(ngjarjet)} ngjarje u sinkronizuan.")
+
+            _mbyll_detajet_pakos(driver)
+
+        if not full_scan and streak_te_panevojshme >= STREAK_NDALO_SKANIMIN:
+            print(f"  (u ndal skanimi -- {streak_te_panevojshme} pako rradhazi tashme te sinkronizuara e te mbyllura)")
+            break
+
+        faqe_nr += 1
+        if faqe_nr > MAX_FAQE_SKANIM:
+            print(f"  (u arrit kufiri i sigurise prej {MAX_FAQE_SKANIM} faqesh -- ndalojme per kete here)")
+            break
+
+        try:
+            next_li = driver.find_element(By.ID, ID_BUTONI_FAQJA_TJETER)
+            if "disabled" in (next_li.get_attribute("class") or ""):
+                break  # s'ka faqe tjeter -- arritem ne fund te listes
+            next_li.find_element(By.TAG_NAME, "a").click()
+            time.sleep(1.2)  # DataTables rifreskon rreshtat permes AJAX/JS
+        except NoSuchElementException:
+            break
+
+    return rezultatet
+
+
 def fetch_orders_to_sync() -> list:
     """
     Lexon nga Supabase tabelen 'orders_to_track' -- kthen numrat e porosive
@@ -471,31 +693,41 @@ def sync_one_order(order_number: str, driver=None):
 if __name__ == "__main__":
     numrat = sys.argv[1:]
 
-    if not numrat:
-        # Menyra AUTOMATIKE (p.sh. GitHub Actions): lexo vete listen e
-        # porosive aktive nga Supabase, ne vend qe te priten argumente.
-        print("Pa argumente -- duke lexuar porosite aktive nga 'orders_to_track'...")
-        numrat = fetch_orders_to_sync()
-        if not numrat:
-            print("Asnje porosi aktive per t'u sinkronizuar. Mbarova.")
-            sys.exit(0)
-        print(f"U gjeten {len(numrat)} porosi aktive: {', '.join(numrat)}")
-        auto_mode = True
-    else:
-        auto_mode = False
+    if numrat:
+        # Menyra TEST MANUAL: xhiro "python ultra_portal_scrape.py 3797608 ..."
+        # per te kontrolluar 1 (ose disa) porosi te caktuara, pa prekur
+        # skanimin e plote. E dobishme per debugging.
+        driver = login_to_ultra(
+            username=os.environ["ULTRA_USERNAME"],
+            password=os.environ["ULTRA_PASSWORD"],
+        )
+        try:
+            for numer in numrat:
+                try:
+                    ngjarjet = sync_one_order(numer, driver=driver)
+                    print(f"Porosia {numer}: {len(ngjarjet)} ngjarje u sinkronizuan.")
+                except TimeoutException:
+                    print(f"Porosia {numer}: NUK U GJET ose faqja nuk u ngarkua (timeout).")
+        finally:
+            driver.quit()
 
-    driver = login_to_ultra(
-        username=os.environ["ULTRA_USERNAME"],
-        password=os.environ["ULTRA_PASSWORD"],
-    )
-    try:
-        for numer in numrat:
-            try:
-                ngjarjet = sync_one_order(numer, driver=driver)
-                print(f"Porosia {numer}: {len(ngjarjet)} ngjarje u sinkronizuan.")
-                if auto_mode:
-                    mark_order_status(numer, delivered=_eshte_dorezuar(ngjarjet))
-            except TimeoutException:
-                print(f"Porosia {numer}: NUK U GJET ose faqja nuk u ngarkua (timeout).")
-    finally:
-        driver.quit()
+    else:
+        # Menyra AUTOMATIKE (parazgjedhur, p.sh. GitHub Actions çdo 15 min):
+        # SKANON VETE te gjitha pakot e portalit -- s'ka me nevoje per listen
+        # manuale "orders_to_track". Nese ndryshorja FULL_SCAN eshte vendosur
+        # (p.sh. nje here ne dite), behet nje skanim i PLOTE (pa u ndalur
+        # heret); ndryshe, behet skanimi i SHPEJTE (ndalon pasi te hase nje
+        # numer te madh pakosh rradhazi tashme te njohura e te pandryshuara).
+        full_scan = bool(os.environ.get("FULL_SCAN"))
+        print(f"Duke skanuar {'TE GJITHA' if full_scan else 'vetem ndryshimet e'} pakot te portali...")
+
+        driver = login_to_ultra(
+            username=os.environ["ULTRA_USERNAME"],
+            password=os.environ["ULTRA_PASSWORD"],
+        )
+        try:
+            rezultatet = scan_all_parcels(driver, full_scan=full_scan)
+        finally:
+            driver.quit()
+
+        print(f"U sinkronizuan {len(rezultatet)} pako (te reja ose te ndryshuara).")
