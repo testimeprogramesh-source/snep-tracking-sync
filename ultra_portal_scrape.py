@@ -153,6 +153,7 @@ SELEKTOR_BUTONI_MBYLL_DETAJET = (
 )
 MAX_FAQE_SKANIM = 150       # kufi sigurie -- s'kapërcejmë kurrë kaq shumë faqe (mbrojtje kundër loop-esh të pafundme)
 STREAK_NDALO_SKANIMIN = 50  # ne skanim JO te plote: ndalo pasi te hasesh kaq rreshta rradhazi tashme te njohur/te mbyllur/te pandryshuar
+DITE_MAX_SINKRONIZIM = 30   # asnje pako qe s'ka pasur azhurnim ("Perditesuar Me") prej me shume se kaq ditesh s'sinkronizohet fare
 
 # ------------------------------------------------------------------
 # 3) SELEKTORET E SEKSIONIT "GJURMIMI" -- VERIFIKUAR LIVE (3 pako te
@@ -607,6 +608,31 @@ def cleanup_old_events():
         print("Pastrimi i porosive mbi 30 dite u krye.")
 
 
+def _eshte_perditesimi_i_vjeter(raw: str, dite: int = DITE_MAX_SINKRONIZIM) -> bool:
+    """
+    Kontrollon nese data "Perditesuar Me" e nje pakoje (siç shfaqet te lista,
+    p.sh. '03/09/2026 12:43:55') eshte me e vjeter se 'dite' dite nga sot.
+
+    Perdoret PARA se te hapim fare pakon -- keshtu qe pako me mbi 30 dite pa
+    asnje azhurnim s'sinkronizohen KURRE (as ne databaze s'futen), ne vend
+    qe te futen dhe pastaj te fshihen me vone nga cleanup_old_tracking_events().
+
+    Nese formati i dates s'njihet (rast i papritur), kthen False (e trajton
+    si "jo te vjeter" -- me mire ta sinkronizojme se sa ta humbasim pa dashje
+    nje pako te vlefshme per shkak te nje gabimi parsimi).
+    """
+    if not raw:
+        return False
+    for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
+        try:
+            dt = datetime.strptime(raw.strip(), fmt)
+            kufiri = datetime.now() - timedelta(days=dite)
+            return dt < kufiri
+        except ValueError:
+            continue
+    return False
+
+
 def scan_all_parcels(driver, full_scan: bool = False) -> list:
     """
     Shkon te lista e PLOTE e pakove (pa filtruar me numer porosie te
@@ -668,6 +694,15 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
                 koha_perditesuar = badges_koha[-1].text.strip() if badges_koha else ""
             except Exception:
                 koha_perditesuar = ""
+
+            if _eshte_perditesimi_i_vjeter(koha_perditesuar):
+                # Pako pa asnje azhurnim prej mbi DITE_MAX_SINKRONIZIM ditesh
+                # -- s'e hapim fare, s'e sinkronizojme fare (perfshire ketu
+                # edhe skanimin e pare "backfill", qe keshtu s'shkon kurre
+                # me thelle se sa 30 dite mbrapa).
+                if not full_scan:
+                    streak_te_panevojshme += 1
+                continue
 
             e_njohur = seen.get(barcode)
             e_mbyllur_e_panryshuar = (
