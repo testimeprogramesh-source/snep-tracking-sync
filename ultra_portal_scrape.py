@@ -150,6 +150,25 @@ SEL_AGJENCIA = ".col-md-4 h6"
 SHENIM_PLACEHOLDER_BOSH = "nuk ka komente"   # e shperfillim si "s'ka shenim"
 
 
+def _ruaj_debug(driver, tag: str):
+    """
+    Ruan nje foto ekrani (.png) dhe HTML-in e faqes (.html) ne dosjen
+    'debug/', per t'u perdorur si diagnostikim kur nje hap deshton.
+    Workflow-i i GitHub Actions i ngarkon keto si "artifact" te
+    shkarkueshem, edhe kur i gjithe xhirimi "duket" i suksesshem.
+    Kjo eshte "best-effort" -- nese vete ruajtja deshton, s'e rrezon
+    procesin kryesor.
+    """
+    try:
+        os.makedirs("debug", exist_ok=True)
+        driver.save_screenshot(f"debug/{tag}.png")
+        with open(f"debug/{tag}.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        print(f"  (u ruajt diagnostikimi: debug/{tag}.png dhe debug/{tag}.html)")
+    except Exception as e:
+        print(f"  (s'u ruajt dot diagnostikimi: {e})")
+
+
 def login_to_ultra(username: str, password: str, headless: bool = True):
     """Hap Chrome, logohet ne portalin e biznesit te Ultra Post. Kthen 'driver'."""
     options = webdriver.ChromeOptions()
@@ -159,13 +178,18 @@ def login_to_ultra(username: str, password: str, headless: bool = True):
     driver = webdriver.Chrome(options=options)
 
     driver.get(URL_LOGIN)
-    wait = WebDriverWait(driver, 15)
-    wait.until(EC.presence_of_element_located((By.NAME, ID_FUSHA_PERDORUESI))).send_keys(username)
-    driver.find_element(By.NAME, ID_FUSHA_FJALEKALIMI).send_keys(password)
-    driver.find_element(By.CSS_SELECTOR, SELEKTOR_BUTONI_HYR).click()
+    wait = WebDriverWait(driver, 20)
+    try:
+        wait.until(EC.presence_of_element_located((By.NAME, ID_FUSHA_PERDORUESI))).send_keys(username)
+        driver.find_element(By.NAME, ID_FUSHA_FJALEKALIMI).send_keys(password)
+        driver.find_element(By.CSS_SELECTOR, SELEKTOR_BUTONI_HYR).click()
 
-    # prisni te mbarrojme ne /dashboard (shenje qe login-i funksionoi)
-    wait.until(EC.url_contains("/businesses-portal/dashboard"))
+        # prisni te mbarrojme ne /dashboard (shenje qe login-i funksionoi)
+        wait.until(EC.url_contains("/businesses-portal/dashboard"))
+    except TimeoutException:
+        print("  -> DESHTOI: login-i s'perfundoi (fusha e login-it ose /dashboard).")
+        _ruaj_debug(driver, "00_login_deshtoi")
+        raise
     return driver
 
 
@@ -175,47 +199,84 @@ def find_and_open_parcel_by_order_number(driver, order_number: str):
     porosise tek "Numri Faturës", dhe klikon rreshtin e vetem qe rezulton
     per te hapur faqen/modalin e pakos. Kthen barkodin SN te gjetur
     (per referencen tuaj -- ruhet ne kolonen "barcode", jo ne ate publike).
+
+    Cdo hap kryesor eshte i ndare me try/except + print, qe nese dickafton
+    (p.sh. TimeoutException), te dime SAKTESISHT ne cilin hap ka ndodhur --
+    dhe ruhet nje "foto ekrani" + HTML per diagnostikim (shih _ruaj_debug).
     """
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 25)
     driver.get(URL_LISTA_PAKOVE)
 
-    # hap panelin "Filtër" (i mbyllur si default)
-    accordion = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, SELEKTOR_FILTER_ACCORDION)))
-    accordion.click()
+    # --- Hapi 1: hap panelin "Filtër" (i mbyllur si default) -----------
+    # Perdorim XPath qe kerkon tekstin "Filt" brenda butonit, jo thjesht
+    # "button.accordion-button" (qe mund te kete disa te tilla ne faqe, dhe
+    # klikimi i te parit te gjetur mund te mos jete ai i "Filtrit").
+    try:
+        accordion = wait.until(EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(@class,'accordion-button') and contains(., 'Filt')]")
+        ))
+        accordion.click()
+    except TimeoutException:
+        print("  -> DESHTOI: s'u gjet/klikua butoni 'Filtër' (accordion).")
+        _ruaj_debug(driver, f"{order_number}_01_pa_filter")
+        raise
 
+    # --- Hapi 2: shkruaj numrin e porosise tek "Numri Faturës" ---------
     # panelli hapet me nje animacion (CSS transition) -- "presence" vetem
     # kontrollon qe eshte ne DOM, jo qe eshte i klikueshem/shkruajshem akoma,
     # prandaj presim "clickable" (dukshmeri + i aktivizuar), plus nje pauze
     # te vogel shtese per vete animacionin, me disa prova rezervë (retry).
-    fusha = wait.until(EC.element_to_be_clickable((By.ID, ID_FUSHA_NUMER_POROSIE)))
-    time.sleep(0.5)
+    try:
+        fusha = wait.until(EC.element_to_be_clickable((By.ID, ID_FUSHA_NUMER_POROSIE)))
+        time.sleep(0.6)
 
-    for perpjekje in range(3):
-        try:
+        for perpjekje in range(4):
+            try:
+                fusha.clear()
+                fusha.send_keys(order_number)
+                break
+            except (ElementNotInteractableException, StaleElementReferenceException):
+                time.sleep(0.6)
+                fusha = wait.until(EC.element_to_be_clickable((By.ID, ID_FUSHA_NUMER_POROSIE)))
+        else:
             fusha.clear()
             fusha.send_keys(order_number)
-            break
-        except (ElementNotInteractableException, StaleElementReferenceException):
-            time.sleep(0.5)
-            fusha = wait.until(EC.element_to_be_clickable((By.ID, ID_FUSHA_NUMER_POROSIE)))
-    else:
-        # nje perpjekje e fundit, pa e kapur -- nese deshton, del vete gabimi origjinal
-        fusha.clear()
-        fusha.send_keys(order_number)
+    except TimeoutException:
+        print("  -> DESHTOI: s'u gjet fusha 'Numri Faturës' (filter_invoice_number).")
+        _ruaj_debug(driver, f"{order_number}_02_pa_fushe")
+        raise
 
-    driver.find_element(By.ID, ID_BUTONI_APLIKO_FILTER).click()
+    # --- Hapi 3: kliko "Apliko filtrin" ---------------------------------
+    try:
+        driver.find_element(By.ID, ID_BUTONI_APLIKO_FILTER).click()
+    except NoSuchElementException:
+        print("  -> DESHTOI: s'u gjet butoni 'Apliko filtrin' (apply_filter_button).")
+        _ruaj_debug(driver, f"{order_number}_03_pa_buton_filter")
+        raise
 
-    # pas filtrit duhet te mbetet 1 rresht, me nje link brenda kolones BARKODI
+    # --- Hapi 4: prit rezultatin (1 rresht me nje link=barkodi) ---------
     def _gjej_link(d):
         links = d.find_elements(By.CSS_SELECTOR, "table a")
         return links[0] if links else False
 
-    link = wait.until(_gjej_link)
+    try:
+        link = wait.until(_gjej_link)
+    except TimeoutException:
+        print(f"  -> DESHTOI: filtri s'ktheu asnje rezultat per porosine {order_number}.")
+        _ruaj_debug(driver, f"{order_number}_04_pa_rezultat")
+        raise
+
     barcode_gjetur = link.text.strip()
     link.click()
 
-    # prisni te ngarkohet seksioni i gjurmimit
-    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
+    # --- Hapi 5: prit te ngarkohet seksioni "Gjurmimi" ------------------
+    try:
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
+    except TimeoutException:
+        print("  -> DESHTOI: pas klikimit te rezultatit, s'u shfaq seksioni 'Gjurmimi'.")
+        _ruaj_debug(driver, f"{order_number}_05_pa_gjurmim")
+        raise
+
     return barcode_gjetur
 
 
