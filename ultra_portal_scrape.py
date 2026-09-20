@@ -345,8 +345,9 @@ def push_to_supabase(order_number: str, barcode: str, events: list):
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
     service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-    rows = [
-        {
+    rows_by_kyc = {}
+    for e in events:
+        rresht = {
             "order_number": order_number,
             "barcode": barcode,
             "event_time": e["event_time"],
@@ -355,8 +356,17 @@ def push_to_supabase(order_number: str, barcode: str, events: list):
             "note": e.get("note"),
             "handled_by": e.get("handled_by"),
         }
-        for e in events
-    ]
+        # Postgres hedh gabim ("ON CONFLICT DO UPDATE command cannot affect
+        # row a second time" -> shfaqet si 500 nga PostgREST) nese i njejti
+        # (order_number, event_time, status_label) shfaqet 2+ here NE TE
+        # NJEJTIN xhirim upsert -- p.sh. nese Ultra Post kthen te njejtin
+        # "history item" 2 here (faqosje/duplikim). Prandaj i shpertheme
+        # rreshtat sipas ketij celesi PARA se t'i dergojme -- mbajme te
+        # fundit, qe eshte praktikisht identik gjithsesi.
+        kyc = (rresht["order_number"], rresht["event_time"], rresht["status_label"])
+        rows_by_kyc[kyc] = rresht
+
+    rows = list(rows_by_kyc.values())
     if not rows:
         return
 
@@ -372,6 +382,11 @@ def push_to_supabase(order_number: str, barcode: str, events: list):
         json=rows,
         timeout=20,
     )
+    if not resp.ok:
+        # Ruajme trupin e pergjigjes (mesazhi i sakte i gabimit nga Postgres/
+        # PostgREST) qe te shfaqet ne log -- pa kete, "500 Internal Server
+        # Error" vetem s'na thote pse.
+        print(f"  -> Supabase ktheu {resp.status_code}: {resp.text}")
     resp.raise_for_status()
 
 
