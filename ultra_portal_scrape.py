@@ -442,6 +442,37 @@ def _mbyll_detajet_pakos(driver):
     _pastro_panelin_e_detajeve(driver)
 
 
+def _prit_ngarkimin_e_listes(driver, wait, rresht_i_vjeter=None):
+    """
+    RREGULLIM I RENDESISHEM (20/09/2026): pret qe DataTables te perfundoje
+    VERTET ngarkimin AJAX te rreshtave (pas ndryshimit te madhesise se
+    faqes ose klikimit "faqja tjeter"), ne vend te nje `time.sleep()` fiks.
+
+    ZBULUAR (20/09/2026): pauza fikse (1.2-1.5 sek) ishte SHUME e shkurter
+    -- DataTables e ngarkon listen me AJAX, dhe skripti i lexonte rreshtat
+    PARA se te mbaronte ngarkimi, duke "pare" 0 rreshta dhe duke raportuar
+    "U sinkronizuan 0 pako" edhe pse ne fakt kishte qindra pako ne portal.
+
+    Nese jepet `rresht_i_vjeter` (nje element <tr> nga PARA veprimit), presim
+    FIRST qe te behet "stale" (d.m.th. DataTables e ka hequr/zevendesuar
+    vertet DOM-in e vjeter) -- kjo shmang nje bug te ngjashem me ate te
+    panelit te detajeve, ku nje kontroll "presence_of_element_located" mund
+    te plotesohet menjehere nga rreshtat E VJETER qe ende s'jane zevendesuar.
+    """
+    if rresht_i_vjeter is not None:
+        try:
+            wait.until(EC.staleness_of(rresht_i_vjeter))
+        except TimeoutException:
+            pass
+    try:
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, f"{SELEKTOR_RRESHT_TABELE} {SELEKTOR_PAKO_DETAJE}")
+        ))
+    except TimeoutException:
+        pass  # normale nese s'ka fare pako ne kete faqe/filtrim
+    time.sleep(0.3)  # nje pauze e vogel shtese, per stabilitet te DOM-it
+
+
 def _pastro_panelin_e_detajeve(driver):
     """
     RREGULLIM I RENDESISHEM (20/09/2026): pastron plotesisht panelin e
@@ -547,8 +578,13 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
     # vendos madhesine e faqes ne maksimum, per te reduktuar numrin e faqeve
     try:
         gjatesia = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_GJATESIA_FAQES)))
+        rresht_i_vjeter = None
+        try:
+            rresht_i_vjeter = driver.find_element(By.CSS_SELECTOR, SELEKTOR_RRESHT_TABELE)
+        except NoSuchElementException:
+            pass
         Select(gjatesia).select_by_value("300")
-        time.sleep(1.5)  # DataTables rifreskon rreshtat permes AJAX pas ndryshimit te madhesise
+        _prit_ngarkimin_e_listes(driver, wait, rresht_i_vjeter)
     except Exception as e:
         print(f"  (kujdes: s'u vendos dot madhesia maksimale e faqes -- {e})")
 
@@ -631,8 +667,13 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
             next_li = driver.find_element(By.ID, ID_BUTONI_FAQJA_TJETER)
             if "disabled" in (next_li.get_attribute("class") or ""):
                 break  # s'ka faqe tjeter -- arritem ne fund te listes
+            rresht_i_vjeter = None
+            try:
+                rresht_i_vjeter = driver.find_element(By.CSS_SELECTOR, SELEKTOR_RRESHT_TABELE)
+            except NoSuchElementException:
+                pass
             next_li.find_element(By.TAG_NAME, "a").click()
-            time.sleep(1.2)  # DataTables rifreskon rreshtat permes AJAX/JS
+            _prit_ngarkimin_e_listes(driver, wait, rresht_i_vjeter)
         except NoSuchElementException:
             break
 
