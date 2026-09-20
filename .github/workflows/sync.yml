@@ -1,16 +1,31 @@
 name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
 
-# Xhiron automatikisht cdo 15 minuta, dhe mund te xhirohet edhe manualisht
-# nga skeda "Actions" e repository-t (buton "Run workflow").
+# Xhirohet ne 2 menyra:
+#   1) "*/15 * * * *"  -- skanim i SHPEJTE, çdo 15 min: kontrollon vetem
+#      pakot e reja ose te ndryshuara qe nga hera e fundit.
+#   2) "30 2 * * *"    -- skanim i PLOTE, 1 here ne dite (02:30 UTC):
+#      kalon te GJITHA pakot, per te kapur çdo pako qe skanimi i shpejte
+#      mund ta kete "harruar" (p.sh. nje pako e vjeter qe befas ndryshon).
+# Mund te xhirohet edhe manualisht nga skeda "Actions" (buton "Run
+# workflow"), me mundesi per te zgjedhur skanim te plote nga kutia e
+# checkbox-it.
 on:
   schedule:
     - cron: "*/15 * * * *"
-  workflow_dispatch: {}
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: "Skano TE GJITHA pakot (jo vetem ndryshimet)"
+        type: boolean
+        default: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 45 min, sepse skanimi i PLOTE (dhe sidomos xhirimi i pare, "backfill"-i
+    # historik) mund te marre shume me shume kohe se nje skanim i shpejte.
+    timeout-minutes: 45
 
     steps:
       - name: Merr kodin e repository-t
@@ -27,12 +42,13 @@ jobs:
       - name: Instalo varesite Python
         run: pip install selenium webdriver-manager requests
 
-      - name: Xhiro sinkronizimin (lexon vete porosite aktive nga Supabase)
+      - name: Xhiro sinkronizimin (skanon vete te gjitha pakot e reja/ndryshuara)
         env:
           ULTRA_USERNAME: ${{ secrets.ULTRA_USERNAME }}
           ULTRA_PASSWORD: ${{ secrets.ULTRA_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FULL_SCAN: ${{ (github.event.schedule == '30 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
         run: python ultra_portal_scrape.py
 
       # Nese ndonje hap deshton (timeout, element i pagjetur, etj.), script-i
