@@ -135,6 +135,7 @@ URL_LISTA_PAKOVE = "https://u-cep.com/businesses-portal/parcels"
 SELEKTOR_FILTER_ACCORDION = "button.accordion-button"     # hap panelin "Filtër"
 ID_FUSHA_NUMER_POROSIE = "filter_invoice_number"           # "Numri Faturës"
 ID_BUTONI_APLIKO_FILTER = "apply_filter_button"             # <a>, jo <button>
+SELEKTOR_PAKO_DETAJE = "span.view-parcel-details"          # badge-i i barkodit -- hap detajet e pakos (AJAX, jo <a>)
 
 # ------------------------------------------------------------------
 # 3) SELEKTORET E SEKSIONIT "GJURMIMI" -- VERIFIKUAR LIVE (3 pako te
@@ -254,22 +255,33 @@ def find_and_open_parcel_by_order_number(driver, order_number: str):
         _ruaj_debug(driver, f"{order_number}_03_pa_buton_filter")
         raise
 
-    # --- Hapi 4: prit rezultatin (1 rresht me nje link=barkodi) ---------
-    def _gjej_link(d):
-        links = d.find_elements(By.CSS_SELECTOR, "table a")
-        return links[0] if links else False
+    # --- Hapi 4: prit rezultatin (1 rresht, badge-i i barkodit) ---------
+    # ZBULUAR nga diagnostikimi (20/09/2026): rreshti i rezultatit NUK ka
+    # asnje <a> qe te "hape" pakon -- e vetmja <a> ne rresht eshte
+    # "tel:+355..." (numri i telefonit te marresit)! Barkodi eshte nje
+    # <span class="badge ... view-parcel-details" data-id="..."> qe hap
+    # detajet e pakos permes nje click-handler JS (jQuery) + AJAX -- s'ka
+    # fare navigim URL-je. Skripti i vjeter po klikonte gabimisht linkun
+    # "tel:", qe s'ben asgje ne Chrome headless -- prandaj s'ngarkohej kurre
+    # seksioni "Gjurmimi".
+    def _gjej_pako(d):
+        elems = d.find_elements(By.CSS_SELECTOR, SELEKTOR_PAKO_DETAJE)
+        return elems[0] if elems else False
 
     try:
-        link = wait.until(_gjej_link)
+        pako_span = wait.until(_gjej_pako)
     except TimeoutException:
         print(f"  -> DESHTOI: filtri s'ktheu asnje rezultat per porosine {order_number}.")
         _ruaj_debug(driver, f"{order_number}_04_pa_rezultat")
         raise
 
-    barcode_gjetur = link.text.strip()
-    link.click()
+    barcode_gjetur = pako_span.text.strip()
+    pako_span.click()
 
     # --- Hapi 5: prit te ngarkohet seksioni "Gjurmimi" ------------------
+    # Klikimi mesiper nis 1-2 thirrje AJAX (detajet e pakos, pastaj
+    # historia/Gjurmimi) -- prandaj presim qe seksioni te mbushet me
+    # te dhena reale (jo thjesht te ekzistoje bosh ne DOM).
     try:
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
     except TimeoutException:
