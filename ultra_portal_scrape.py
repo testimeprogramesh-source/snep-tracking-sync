@@ -440,6 +440,33 @@ def _mbyll_detajet_pakos(driver):
     except TimeoutException:
         print("  (kujdes: s'u gjet dot butoni 'Mbyll' -- vazhdoj gjithsesi)")
     _pastro_panelin_e_detajeve(driver)
+    _detyro_mbylljen_e_sirtarit(driver)
+
+
+def _detyro_mbylljen_e_sirtarit(driver):
+    """
+    RREGULLIM I RENDESISHEM (20/09/2026): "rrjete sigurie".
+
+    ZBULUAR: paneli i detajeve eshte nje "sirtar" (drawer, Metronic) qe kur
+    hapet shton nje mbivendosje `<div class="drawer-overlay">` mbi gjithe
+    faqen. Kur butoni "Mbyll" DESHTON te klikohet (p.sh. pak sekonda vonese
+    ne renderim), kjo mbivendosje MBETET aty -- e padukshme por PREK ende
+    klikimet -- dhe klikimi i pakos TJETER deshton me
+    "ElementClickInterceptedException: ... Other element would receive the
+    click: <div class="drawer-overlay">".
+
+    Prandaj, PAVARESISHT nese "Mbyll" u klikua apo jo, hjekim me force cdo
+    mbivendosje `.drawer-overlay` dhe cdo klase "drawer-on" (qe e mban
+    sirtarin te "hapur" ne CSS) permes JavaScript -- kjo garanton qe faqja
+    kthehet gjithmone ne gjendje te klikueshme para se te vazhdojme.
+    """
+    try:
+        driver.execute_script(
+            "document.querySelectorAll('.drawer-overlay').forEach(function(e){e.remove();});"
+            "document.querySelectorAll('.drawer-on').forEach(function(e){e.classList.remove('drawer-on');});"
+        )
+    except Exception:
+        pass
 
 
 def _prit_ngarkimin_e_listes(driver, wait, rresht_i_vjeter=None):
@@ -627,6 +654,7 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
             # panel PARA klikimit (shih shenimin te _pastro_panelin_e_detajeve),
             # pastaj klikojme badge-in dhe presim ngarkimin e Gjurmimit TE RI
             _pastro_panelin_e_detajeve(driver)
+            _detyro_mbylljen_e_sirtarit(driver)
             try:
                 badge.click()
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SEL_RRESHTAT)))
