@@ -417,16 +417,31 @@ def _lexo_numrin_e_porosise(driver) -> str:
 
     E VERIFIKUAR nga nje foto ekrani reale (20/09/2026): fusha "Numri
     Faturës" ndonjehere permban 2 numra te ndare me hapesire (p.sh.
-    "3818985 227125581789661533") -- i pari eshte numri i vertete i
-    porosise se SNEP. Per te qene te fortë ndaj ndryshimeve te vogla te
-    HTML-it (s'kemi nje selektor CSS te konfirmuar per kete fushe), e
-    nxjerrim me regex nga i gjithe teksti i faqes, jo nga nje element i
-    caktuar. Rezervë: fusha "Shënimet" e formatit "Order #1234567".
+    "3818985 227125581789661533"). VENDIM (20/09/2026): ruajme te DYTIN
+    (kodin e GJATE) si numer porosie -- kjo eshte kodi qe klientet do te
+    kerkojne ne faqen e gjurmimit, jo numri i shkurter i fatures. Nese
+    fusha permban VETEM 1 numer (s'ka kod te gjate per kete pako),
+    perdorim ate te vetmin, qe skanimi te mos e humbase fare pakon. Per te
+    qene te fortë ndaj ndryshimeve te vogla te HTML-it (s'kemi nje
+    selektor CSS te konfirmuar per kete fushe), e nxjerrim me regex nga i
+    gjithe teksti i faqes, jo nga nje element i caktuar. Rezervë e fundit:
+    fusha "Shënimet" e formatit "Order #1234567" (ky eshte gjithnje numri
+    i SHKURTER -- perdoret vetem kur "Numri Faturës" mungon krejtesisht).
     """
     teksti = driver.find_element(By.TAG_NAME, "body").text
+
+    # Rasti me 2 numra ("i shkurter  i gjate") -- duam te DYTIN, te gjatin.
+    m = re.search(r"Numri\s+Fatur[ëe]s\s*:?\s*\d+\s+(\d+)", teksti, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # Rasti me vetem 1 numer (s'ka kod te gjate) -- perdorim ate.
     m = re.search(r"Numri\s+Fatur[ëe]s\s*:?\s*(\d+)", teksti, re.IGNORECASE)
-    if not m:
-        m = re.search(r"Order\s*#\s*(\d+)", teksti)
+    if m:
+        return m.group(1)
+
+    # Rezerve e fundit (numri i shkurter, nese s'gjendet fare "Numri Fatures").
+    m = re.search(r"Order\s*#\s*(\d+)", teksti)
     return m.group(1) if m else ""
 
 
