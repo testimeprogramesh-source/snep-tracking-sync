@@ -719,14 +719,25 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
                     streak_te_panevojshme += 1
                 continue
 
+            # RREGULLIM (21/09/2026): GABIM I MADH I GJETUR -- kushti i
+            # meparshem kerkonte "active is False" (d.m.th. VETEM pako
+            # tashme te DOREZUARA) qe nje pako te anashkalohej. Kjo do te
+            # thoshte qe CDO pako ende AKTIVE (ne rruge, jo e dorezuar)
+            # rihapej NE CDO XHIRIM, edhe kur "Perditesuar Me" s'kishte
+            # ndryshuar fare qe nga hera e fundit -- pikerisht ky ishte
+            # shkaku qe skanimi "i shpejte" po zgjaste ~3 ore ne vend te
+            # pak minutash (me qindra porosi aktive cdo dite, te gjitha
+            # rihapeshin cdo 15 min pa nevoje). E vetmja gje qe duhet
+            # kontrolluar eshte nese "Perditesuar Me" eshte ende NJESOJ si
+            # here e fundit qe e pame -- pavaresisht nese pakoja eshte
+            # ende aktive apo tashme e mbyllur.
             e_njohur = seen.get(barcode)
-            e_mbyllur_e_panryshuar = (
+            e_panryshuar = (
                 e_njohur is not None
-                and e_njohur.get("active") is False
                 and e_njohur.get("list_updated_raw") == koha_perditesuar
             )
 
-            if e_mbyllur_e_panryshuar:
+            if e_panryshuar:
                 if not full_scan:
                     streak_te_panevojshme += 1
                 continue
