@@ -1,17 +1,24 @@
 name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
 
 # Xhirohet ne 2 menyra:
-#   1) "*/15 * * * *"  -- skanim i SHPEJTE, çdo 15 min: kontrollon vetem
-#      pakot e reja ose te ndryshuara qe nga hera e fundit.
-#   2) "30 2 * * *"    -- skanim i PLOTE, 1 here ne dite (02:30 UTC):
+#   1) "*/15 6-15 * * *" -- skanim i SHPEJTE, çdo 15 min, VETEM gjate orarit
+#      08:00-18:00 (ora e Shqiperise, UTC+2 ne kohen verore). Oret 6-15 ne
+#      UTC = 08:00-17:59 ne Shqiperi -- xhirimi i fundit i dites eshte
+#      17:45, asnje xhirim pas ores 18:00.
+#      KUJDES (ndryshimi i ores ne Shqiperi, fund tetori): kur Shqiperia
+#      kalon ne oren dimerore (UTC+1), kjo dritare 6-15 UTC do te behet
+#      07:00-16:59 ne Shqiperi ne vend te 08:00-17:59 -- duhet rregulluar
+#      atehere ne 7-16.
+#   2) "30 2 * * *"    -- skanim i PLOTE, 1 here ne dite (02:30 UTC =
+#      04:30 ne Shqiperi, para se te fillojne skanimet e shpejta):
 #      kalon te GJITHA pakot, per te kapur çdo pako qe skanimi i shpejte
 #      mund ta kete "harruar" (p.sh. nje pako e vjeter qe befas ndryshon).
 # Mund te xhirohet edhe manualisht nga skeda "Actions" (buton "Run
-# workflow"), me mundesi per te zgjedhur skanim te plote nga kutia e
-# checkbox-it.
+# workflow"), ne cdo kohe (pa kufizim orari) -- me mundesi per te zgjedhur
+# skanim te plote nga kutia e checkbox-it.
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/15 6-15 * * *"
     - cron: "30 2 * * *"
   workflow_dispatch:
     inputs:
