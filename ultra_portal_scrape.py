@@ -545,21 +545,50 @@ def fetch_seen_parcels() -> dict:
     {barcode: {"order_number":..., "list_updated_raw":..., "active":...}}
     per te ditur SHPEJT (pa hapur çdo pako) cilat pako i njohim tashme dhe
     s'kane ndryshuar qe nga hera e fundit.
+
+    RREGULLIM I RENDESISHEM (22/09/2026): GABIM I MADH I GJETUR. Supabase
+    (PostgREST) kthen VETEM 1000 rreshta per kerkese, veç nese kerkohet
+    shprehimisht "faqja" tjeter (header "Range"). Kjo funksion me pare bente
+    1 kerkese te vetme -- ndersa tabela 'ultra_parcels_seen' RRITET
+    PERGJITHMONE (nje rresht per çdo barkod te pare ndonjehere, s'fshihet
+    KURRE, ndryshe nga 'tracking_events' qe pastrohet çdo 30 dite). Me 50+
+    porosi/dite, kjo tabele e kaloi shpejt 1000 rreshta -- keshtu qe qindra
+    pako TASHME TE NJOHURA "binin jashte" atij kufiri dhe i dukeshin
+    skriptit si "te reja", duke i rihapur gabimisht ÇDO HERE (edhe naten,
+    pa asnje ndryshim real) -- ky ishte shkaku i vertete qe skanimi vazhdonte
+    te merrte ~20 min edhe pas rregullimit te meparshem. Tani lexohet NE
+    FAQE (1000 rreshta ne çdo kerkese, permes header-it "Range"), duke
+    vazhduar deri sa te mos kete me rreshta -- keshtu qe GJITHMONE merret
+    tabela e PLOTE, sado e madhe te behet ne te ardhmen.
     """
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
     service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-    resp = requests.get(
-        f"{supabase_url}/rest/v1/ultra_parcels_seen",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-        },
-        params={"select": "barcode,order_number,list_updated_raw,active"},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return {row["barcode"]: row for row in resp.json()}
+    rezultati = {}
+    madhesia_faqes = 1000
+    fillimi = 0
+    while True:
+        resp = requests.get(
+            f"{supabase_url}/rest/v1/ultra_parcels_seen",
+            headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Range-Unit": "items",
+                "Range": f"{fillimi}-{fillimi + madhesia_faqes - 1}",
+            },
+            params={"select": "barcode,order_number,list_updated_raw,active"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rreshtat = resp.json()
+        for rresht in rreshtat:
+            rezultati[rresht["barcode"]] = rresht
+
+        if len(rreshtat) < madhesia_faqes:
+            break
+        fillimi += madhesia_faqes
+
+    return rezultati
 
 
 def upsert_seen_parcel(barcode: str, order_number: str, list_updated_raw: str, active: bool):
