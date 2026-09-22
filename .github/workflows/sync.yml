@@ -1,14 +1,14 @@
 name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
 
 # Xhirohet ne 2 menyra:
-#   1) "*/15 6-15 * * *" -- skanim i SHPEJTE, çdo 15 min, VETEM gjate orarit
-#      08:00-18:00 (ora e Shqiperise, UTC+2 ne kohen verore). Oret 6-15 ne
-#      UTC = 08:00-17:59 ne Shqiperi -- xhirimi i fundit i dites eshte
-#      17:45, asnje xhirim pas ores 18:00.
+#   1) "0 6-17 * * *"  -- skanim i SHPEJTE, 1 here ne ORE (ne minutin :00),
+#      VETEM gjate orarit 08:00-19:00 (ora e Shqiperise, UTC+2 ne kohen
+#      verore). Oret 6-17 ne UTC = 08:00-19:00 ne Shqiperi (12 xhirime/dite:
+#      08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19).
 #      KUJDES (ndryshimi i ores ne Shqiperi, fund tetori): kur Shqiperia
-#      kalon ne oren dimerore (UTC+1), kjo dritare 6-15 UTC do te behet
-#      07:00-16:59 ne Shqiperi ne vend te 08:00-17:59 -- duhet rregulluar
-#      atehere ne 7-16.
+#      kalon ne oren dimerore (UTC+1), kjo dritare 6-17 UTC do te behet
+#      07:00-18:00 ne Shqiperi ne vend te 08:00-19:00 -- duhet rregulluar
+#      atehere ne 7-18.
 #   2) "30 2 * * *"    -- skanim i PLOTE, 1 here ne dite (02:30 UTC =
 #      04:30 ne Shqiperi, para se te fillojne skanimet e shpejta):
 #      kalon te GJITHA pakot, per te kapur çdo pako qe skanimi i shpejte
@@ -18,7 +18,7 @@ name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
 # skanim te plote nga kutia e checkbox-it.
 on:
   schedule:
-    - cron: "*/15 6-15 * * *"
+    - cron: "0 6-17 * * *"
     - cron: "30 2 * * *"
   workflow_dispatch:
     inputs:
@@ -26,6 +26,17 @@ on:
         description: "Skano TE GJITHA pakot (jo vetem ndryshimet)"
         type: boolean
         default: false
+
+# MBROJTJE (21/09/2026): mos lejo 2 xhirime NJEKOHESISHT (p.sh. nje
+# "Run workflow" manual pikerisht kur nis edhe ai automatik) -- do te
+# thoshte 2 sesione Selenium qe perpiqen te hyjne ne portalin e Ultra
+# Post ne te NJEJTEN kohe me te njejten llogari, gje qe mund te
+# shkaktoje perplasje/gabime. Nese nje xhirim eshte ende ne pune, çdo
+# xhirim tjeter (qofte manual apo automatik) PRET ne radhe (nuk
+# anulohet, thjesht xhirohet pasi te mbaroje i pari).
+concurrency:
+  group: sync-ultra-post
+  cancel-in-progress: false
 
 jobs:
   sync:
