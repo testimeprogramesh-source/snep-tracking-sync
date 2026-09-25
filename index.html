@@ -592,6 +592,11 @@
     var viaLabel = document.getElementById('via');
     var countryButtons = document.querySelectorAll('.country-btn');
     var COURIER_LABELS = { ultra: 'Ultra Post', postman: 'Postman' };
+    // Harta e kundert (kurjer -> shtet), qe pas nje kerkimi te rregullojme
+    // vete flamurin AL/XK ne krye sipas kurjerit TE VERTETE te rezultatit
+    // (shih poshte -- s'duam qe flamuri i zgjedhur te bjere ndesh me
+    // rezultatin e shfaqur, p.sh. XK i ndezur, por porosia eshte Ultra Post).
+    var COURIER_TO_COUNTRY = { ultra: 'AL', postman: 'XK' };
 
     countryButtons.forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -659,6 +664,18 @@
           var faktikuKurjeri = events[0] && events[0].courier;
           if (faktikuKurjeri && COURIER_LABELS[faktikuKurjeri] && viaLabel) {
             viaLabel.textContent = 'Dërgesa via ' + COURIER_LABELS[faktikuKurjeri];
+          }
+          // Njesoj, rregullojme edhe VETE flamurin e ndezur (AL/XK) ne krye
+          // qe te perputhet me kurjerin e vertete -- perndryshe klienti sheh
+          // p.sh. "XK" te ndezur ne krye teksa poshte shfaqet nje porosi
+          // Ultra Post, gje qe duket si gabim edhe pse te dhenat jane te sakta.
+          var vendiFaktik = faktikuKurjeri && COURIER_TO_COUNTRY[faktikuKurjeri];
+          if (vendiFaktik) {
+            countryButtons.forEach(function (b) {
+              var eshteVendiFaktik = b.getAttribute('data-country') === vendiFaktik;
+              b.classList.toggle('active', eshteVendiFaktik);
+              b.setAttribute('aria-pressed', eshteVendiFaktik ? 'true' : 'false');
+            });
           }
           renderTimeline(results, events);
         })
