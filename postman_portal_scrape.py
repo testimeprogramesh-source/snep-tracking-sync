@@ -111,6 +111,30 @@ XPATH_BUTONI_FILTRO = "//button[contains(., 'Filtro')]"
 SELEKTOR_RRESHT_GRID = "div.ag-row"
 SELEKTOR_QELIZA = "div.ag-cell"
 
+# ZBULUAR (25/09/2026, inspektuar live ne Chrome): faqja e listes KA nje
+# filter te vertete date -- "Prej datës:" / "Deri me:" -- jo thjesht nje
+# shfaqje dekorative. E testuam direkt: nga 9834 porosi GJITHSEJ (qe nga
+# fillimi i sistemit), filtri i reduktoi ne VETEM 721 (per periudhen
+# gusht-shtator 2026). Perdorim kete filter qe skanimi TE MOS kaloje
+# gjithe historikun (9800+ porosi, shumica krejtesisht te panevojshme),
+# por VETEM porosite e fundit -- shume me shpejte, dhe pikerisht ajo qe
+# duhet (klienti konfirmoi: "nuk me duhen te gjitha, dua vetem gusht e
+# shtator").
+XPATH_FUSHAT_DATE = "//input[@placeholder='Select date']"
+SEL_KALENDAR_PARA = "button.ant-picker-header-prev-btn"
+DITE_PRAPA_PARAZGJEDHUR = 60  # ~2 muaj mbrapa -- kap rehat "muajin e kaluar + ky muaj";
+                              # mund te ndryshohet me environment variable DITE_PRAPA_SKANIM
+
+# ZBULUAR (25/09/2026, inspektuar live me JavaScript ne DOM-in real): AG
+# Grid e VIRTUALIZON listen -- edhe kur "faqja" ka 500 rreshta (madhesia
+# maksimale), ne DOM ne çdo moment gjenden VETEM rreshtat afer pjeses
+# aktualisht te dukshme ne ekran (rreth 20-70 rreshta, JO te gjithe 500).
+# Kjo eshte arsyeja e VERTETE PERSE nje skanim i plote kapi vetem 128
+# porosi ne vend te ~721 -- shumica e rreshtave thjesht s'ishin ne DOM
+# per t'u lexuar fare. Zgjidhja eshte te "scroll"-ojme VETE kontejnerin
+# e grid-it (shih _mblidh_rreshtat_e_faqes_me_scroll me poshte).
+SEL_GRID_VIEWPORT = "div.ag-body-viewport"
+
 MAX_FAQE_SKANIM = 150
 STREAK_NDALO_SKANIMIN = 50
 DITE_MAX_SINKRONIZIM = 30
@@ -479,6 +503,115 @@ def cleanup_old_events():
         print("Pastrimi i porosive mbi 30 dite u krye (i perbashket per Ultra Post + Postman).")
 
 
+def _kliko_diten_ne_kalendar(driver, wait, data_target):
+    """
+    Brenda kalendarit TASHME TE HAPUR (Ant Design DatePicker), lundron
+    mbrapa muaj-pas-muaji (kalendari hapet gjithmone ne MUAJIN AKTUAL) dhe
+    kliko diten e sakte.
+    ZBULUAR (25/09/2026, testuar live): te shkruarit e tekstit direkt ne
+    fushe (p.sh. "2026-08-01") pati sjellje jo te qendrueshme -- "Escape"
+    e ANULON ndryshimin (kthehet te vlera e meparshme), "Enter" ndonjehere
+    le kalendarin te hapur. Klikimi i vertete i dites ne kalendar eshte
+    METODA E QENDRUESHME, e konfirmuar live.
+    """
+    sot = datetime.now(timezone(timedelta(hours=2))).date()
+    muaj_mbrapa = (sot.year - data_target.year) * 12 + (sot.month - data_target.month)
+    if muaj_mbrapa > 0:
+        butoni_mbrapa = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, SEL_KALENDAR_PARA)))
+        for _ in range(muaj_mbrapa):
+            butoni_mbrapa.click()
+            time.sleep(0.15)
+
+    # "ant-picker-cell-in-view" dallon diten e MUAJIT TE SHFAQUR nga ditet
+    # gri te muajit fqinj (qe mund te kene te njejtin numer, p.sh. "30" ne
+    # fund te nje muaji 31-ditor) -- konfirmuar live ne DOM.
+    dita_xpath = (
+        "//td[contains(@class,'ant-picker-cell-in-view')]"
+        f"[.//div[contains(@class,'ant-picker-cell-inner')][normalize-space(text())='{data_target.day}']]"
+    )
+    wait.until(EC.element_to_be_clickable((By.XPATH, dita_xpath))).click()
+
+
+def _vendos_filtrin_e_dates(driver, wait, dite_prapa: int) -> bool:
+    """
+    Vendos filtrin "Prej datës" / "Deri me" ne faqen e listes se porosive
+    te Postman-it, qe skanimi TE MOS kaloje krejt historikun (9800+ porosi
+    qe nga fillimi i sistemit), por VETEM porosite e "dite_prapa" diteve te
+    fundit. Shih shenimin tek XPATH_FUSHAT_DATE me siper per detaje.
+    Kthen True nese filtri u vendos me sukses, False nese jo (rast i
+    rralle -- p.sh. faqja e ka ndryshuar dizajnin) -- ne ate rast vazhdojme
+    GJITHESI (thjesht do te skanoje me shume porosi se sa duhet).
+    """
+    sot = datetime.now(timezone(timedelta(hours=2))).date()
+    nga = sot - timedelta(days=dite_prapa)
+
+    try:
+        fushat = driver.find_elements(By.XPATH, XPATH_FUSHAT_DATE)
+        if len(fushat) < 2:
+            print("  (kujdes: s'u gjeten fushat e filtrit te dates -- vazhdojme PA filter, do te skanohet gjithe historiku)")
+            return False
+
+        fushat[0].click()
+        _kliko_diten_ne_kalendar(driver, wait, nga)
+
+        # rilexo fushat -- DOM-i mund te jete rifreskuar pas klikimit te dites
+        fushat = driver.find_elements(By.XPATH, XPATH_FUSHAT_DATE)
+        fushat[1].click()
+        _kliko_diten_ne_kalendar(driver, wait, sot)
+
+        btn_filtro = wait.until(EC.element_to_be_clickable((By.XPATH, XPATH_BUTONI_FILTRO)))
+        btn_filtro.click()
+        time.sleep(1.5)
+        print(f"  (filtri i dates u vendos: nga {nga.isoformat()} deri {sot.isoformat()})")
+        return True
+    except Exception as e:
+        print(f"  (kujdes: s'u vendos dot filtri i dates -- {e} -- vazhdojme PA filter)")
+        return False
+
+
+def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
+    """
+    Lexon TE GJITHE rreshtat e "faqes" aktuale te grid-it (p.sh. 500
+    porosi), duke lëvizur (scroll) VETE brenda kontejnerit -- shih
+    shenimin tek SEL_GRID_VIEWPORT me siper per PSE kjo eshte e nevojshme
+    (AG Grid virtualizon, s'i mban te GJITHA ne DOM njekohesisht).
+    Kthen nje liste fjalorësh {col_id: tekst}, nje per çdo rresht UNIK
+    (identifikuar nga atributi "row-index", jo nga teksti -- qendrueshem
+    edhe kur DOM-i i nje rreshti rikrijohet gjate scroll-imit).
+    """
+    rezultati = {}  # row_index (string) -> {col_id: tekst}
+    try:
+        viewport = driver.find_element(By.CSS_SELECTOR, SEL_GRID_VIEWPORT)
+    except NoSuchElementException:
+        return []
+
+    lartesia_totale = driver.execute_script("return arguments[0].scrollHeight;", viewport) or 0
+    lartesia_dukshme = driver.execute_script("return arguments[0].clientHeight;", viewport) or 1
+    hapi = max(int(lartesia_dukshme * 0.85), 200)  # mbivendosje e vogel, per te mos humbur rreshta
+
+    pozicioni = 0
+    while True:
+        driver.execute_script("arguments[0].scrollTop = arguments[1];", viewport, pozicioni)
+        time.sleep(0.2)
+        for rresht in driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID):
+            row_index = rresht.get_attribute("row-index")
+            if not row_index or row_index in rezultati:
+                continue
+            try:
+                qelizat = _lexo_qelizat_rreshtit(rresht)
+            except StaleElementReferenceException:
+                continue
+            if qelizat.get("displayId"):
+                rezultati[row_index] = qelizat
+
+        if pozicioni >= lartesia_totale - lartesia_dukshme:
+            break
+        pozicioni += hapi
+
+    driver.execute_script("arguments[0].scrollTop = 0;", viewport)  # thjesht per pastërti vizuale
+    return list(rezultati.values())
+
+
 def _vendos_madhesine_maksimale_faqes(driver, wait):
     """Provon te vendose madhesine e faqes ne 500 (maksimumi i mundshem, i verifikuar live)."""
     try:
@@ -537,10 +670,13 @@ def _kliko_faqen_tjeter(driver) -> bool:
         return False
 
 
-def scan_all_parcels(driver, full_scan: bool = False) -> list:
+def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) -> list:
     """
-    Skanon te GJITHA porosite e portalit te Postman (njesoj si
-    scan_all_parcels() ne ultra_portal_scrape.py). Per çdo porosi:
+    Skanon porosite e portalit te Postman (njesoj si scan_all_parcels() ne
+    ultra_portal_scrape.py), por VETEM ato te "dite_prapa" diteve te fundit
+    (shih _vendos_filtrin_e_dates me siper -- ndryshe do te kalonim
+    krejt historikun, 9800+ porosi, shumica krejtesisht te panevojshme).
+    Per çdo porosi:
       - Nese eshte E RE (s'e kemi pare kurre) OSE STATUSI ka ndryshuar qe nga
         hera e fundit -> hap detajet, nxjerr historikun, ruaj ne Supabase.
       - Perndryshe -> anashkalohet (kursen kohe).
@@ -548,25 +684,28 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
     pare per "streak", per te kapur çdo porosi qe skanimi i shpejte mund ta
     kete "harruar".
     """
+    if dite_prapa is None:
+        dite_prapa = int(os.environ.get("DITE_PRAPA_SKANIM", DITE_PRAPA_PARAZGJEDHUR))
+
     seen = fetch_seen_parcels()
     rezultatet = []
     wait = WebDriverWait(driver, 20)
 
     driver.get(URL_LISTA_POROSIVE)
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
+    # RENDESISHME: filtri i dates PARA madhesise se faqes -- ne kete renditje
+    # e testuam live dhe funksionoi sakte (klikimi i "Filtro" e rifreskon
+    # listen, dhe madhesia e faqes mbetet e vendosur nga hapi tjeter).
+    _vendos_filtrin_e_dates(driver, wait, dite_prapa)
     _vendos_madhesine_maksimale_faqes(driver, wait)
 
     streak_te_panevojshme = 0
     faqe_nr = 1
 
     while True:
-        rreshtat = driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)
-        for rresht in rreshtat:
-            try:
-                qelizat = _lexo_qelizat_rreshtit(rresht)
-            except StaleElementReferenceException:
-                continue
-
+        rreshtat_te_dhena = _mblidh_rreshtat_e_faqes_me_scroll(driver)
+        print(f"  (faqja {faqe_nr}: {len(rreshtat_te_dhena)} rreshta u lexuan nga grid-i)")
+        for qelizat in rreshtat_te_dhena:
             kodi = qelizat.get("displayId", "")
             postman_id = _id_numerik_nga_kodi(kodi)
             order_number = qelizat.get("refid", "").strip()
