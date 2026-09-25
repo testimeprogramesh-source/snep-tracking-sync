@@ -152,8 +152,21 @@ def _eshte_ngjarje_teknike(pershkrimi: str) -> bool:
 
 
 def _ruaj_debug(driver, tag: str):
-    """Njesoj si tek ultra_portal_scrape.py -- ruan screenshot + HTML per diagnostikim."""
+    """Njesoj si tek ultra_portal_scrape.py -- ruan screenshot + HTML per diagnostikim.
+    PLUS (25/09/2026): printon URL-in aktual dhe nje pjese te shkurter te tekstit te
+    dukshem te faqes DIREKT ne log-un e vete workflow-it (skeda "Actions" -> run-i ->
+    hapi "Xhiro sinkronizimin"), qe te mos duhet gjithmone te shkarkohet artifact-i
+    .zip per te kuptuar CFARE ka ndodhur ne fakt (p.sh. mesazh "kredenciale te
+    gabuara", faqe verifikimi/"jam njeri", apo thjesht faqja ende ne /login)."""
     try:
+        print(f"  (URL aktual ne momentin e deshtimit: {driver.current_url})")
+        try:
+            teksti = driver.execute_script("return document.body.innerText || '';")
+            teksti = " ".join(teksti.split())[:600]
+            if teksti:
+                print(f"  (tekst i shkurter i dukshem ne faqe: {teksti})")
+        except Exception:
+            pass
         os.makedirs("debug", exist_ok=True)
         driver.save_screenshot(f"debug/postman_{tag}.png")
         with open(f"debug/postman_{tag}.html", "w", encoding="utf-8") as f:
@@ -183,7 +196,9 @@ def login_to_postman(username: str, password: str, headless: bool = True):
     driver = webdriver.Chrome(options=options)
 
     driver.get(URL_LOGIN)
-    wait = WebDriverWait(driver, 20)
+    # 35s (jo 20s si me pare, 25/09/2026): dhame pak me shume kohe per rastin
+    # kur serveri i GitHub Actions eshte me i ngadalte se kompjuteri lokal.
+    wait = WebDriverWait(driver, 35)
     try:
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
 
@@ -568,8 +583,8 @@ def sync_one_order(order_number: str, driver=None):
     own_driver = driver is None
     if own_driver:
         driver = login_to_postman(
-            username=os.environ["POSTMAN_USERNAME"],
-            password=os.environ["POSTMAN_PASSWORD"],
+            username=os.environ["POSTMAN_USERNAME"].strip(),
+            password=os.environ["POSTMAN_PASSWORD"].strip(),
         )
     try:
         wait = WebDriverWait(driver, 20)
@@ -612,8 +627,8 @@ if __name__ == "__main__":
     if numrat:
         # Menyra TEST MANUAL: xhiro "python postman_portal_scrape.py 3828131 ..."
         driver = login_to_postman(
-            username=os.environ["POSTMAN_USERNAME"],
-            password=os.environ["POSTMAN_PASSWORD"],
+            username=os.environ["POSTMAN_USERNAME"].strip(),
+            password=os.environ["POSTMAN_PASSWORD"].strip(),
         )
         try:
             for numer in numrat:
@@ -631,8 +646,8 @@ if __name__ == "__main__":
         print(f"Duke skanuar {'TE GJITHA' if full_scan else 'vetem ndryshimet e'} porosite te Postman...")
 
         driver = login_to_postman(
-            username=os.environ["POSTMAN_USERNAME"],
-            password=os.environ["POSTMAN_PASSWORD"],
+            username=os.environ["POSTMAN_USERNAME"].strip(),
+            password=os.environ["POSTMAN_PASSWORD"].strip(),
         )
         try:
             rezultatet = scan_all_parcels(driver, full_scan=full_scan)
