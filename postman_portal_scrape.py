@@ -137,12 +137,6 @@ SEL_GRID_VIEWPORT = "div.ag-body-viewport"
 
 MAX_FAQE_SKANIM = 150
 STREAK_NDALO_SKANIMIN = 50
-# Nese kaq porosi RRADHAZI dalin "shume te vjetra" (jashte dritares se
-# "dite_prapa" diteve), ndalojme skanimin KREJT -- shih shenimin tek
-# scan_all_parcels(). Bazohet te supozimi qe lista e Postman-it eshte e
-# renditur vetvetiu nga porosia ME E REJA te ajo ME E VJETRA (konfirmuar
-# live: ID-te e porosive zbresin ne rradhe -- 4391192, 4390553, 4390484...).
-JASHTE_DRITARES_RRESHTA_NDALO = 80
 DITE_MAX_SINKRONIZIM = 30
 
 # Statuset e MUNDSHME (te verifikuara live nga dropdown-i "Statusi") --
@@ -777,9 +771,7 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
     _vendos_madhesine_maksimale_faqes(driver, wait)
 
     streak_te_panevojshme = 0
-    jashte_dritares_radhazi = 0
     faqe_nr = 1
-    ndaloji_krejt = False
 
     while True:
         rreshtat_te_dhena = _mblidh_rreshtat_e_faqes_me_scroll(driver)
@@ -836,22 +828,17 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             if data_e_fundit is not None and data_e_fundit < data_prerjes:
                 upsert_seen_parcel(postman_id, order_number, statusi, active=False)
                 seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": False}
-                jashte_dritares_radhazi += 1
-                print(f"  Porosia {kodi} (referenca {order_number}): shume e vjeter ({data_e_fundit.date()}) -- s'u ruajt ne tracking_events. ({jashte_dritares_radhazi}/{JASHTE_DRITARES_RRESHTA_NDALO} rradhazi)")
-                # NDALIM I HERSHEM: meqe lista duket e renditur nga me e reja
-                # te me e vjetra (shih JASHTE_DRITARES_RRESHTA_NDALO me siper),
-                # nese kaq porosi RRADHAZI jane te gjitha jashte dritares qe na
-                # intereson, s'ka pse te vazhdojme me thelle -- gjithçka pas
-                # ketij pikut do te jete VETEM edhe me e vjeter. Kjo kursen
-                # kohe DHE ngarkese te panevojshme (s'hapim mijera tabe per
-                # porosi qe gjithsesi s'do t'i ruajme).
-                if jashte_dritares_radhazi >= JASHTE_DRITARES_RRESHTA_NDALO:
-                    print(f"  (u ndal skanimi -- {jashte_dritares_radhazi} porosi rradhazi jashte dritares se {dite_prapa} diteve)")
-                    ndaloji_krejt = True
-                    break
+                print(f"  Porosia {kodi} (referenca {order_number}): shume e vjeter ({data_e_fundit.date()}) -- s'u ruajt ne tracking_events.")
+                # HEQUR (26/09/2026): kishim NJE ndalim te hershem ketu ("nese
+                # 80 porosi rradhazi jane te vjetra, ndalo krejt"), bazuar te
+                # supozimi qe lista eshte e renditur nga me e reja te me e
+                # vjetra. Ai supozim DOLI I GABUAR -- konfirmuar live: porosite
+                # ME TE REJA (2026, muajt e fundit) MUNGONIN krejt nga baza e
+                # te dhenave sepse skanimi ndalonte shume heret (te fillimi i
+                # listes, ku jane porosi te 2024-it). Tani kalojme GJITHE
+                # listen pa ndalur para kohe -- me e ngadalte, por e sakte.
                 continue
 
-            jashte_dritares_radhazi = 0
             push_to_supabase(order_number, kodi, ngjarjet, courier="postman")
             upsert_seen_parcel(postman_id, order_number, statusi, active=not eshte_perfundimtar)
             seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": not eshte_perfundimtar}
@@ -860,9 +847,6 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             # SHENIM: falë tab-it te ri (get_order_history_ne_tab_te_re), lista
             # dhe faqja/pagination-i i saj NUK preken fare -- s'ka nevoje te
             # rikthehemi ose te riklikojme asgje ketu.
-
-        if ndaloji_krejt:
-            break
 
         if not full_scan and streak_te_panevojshme >= STREAK_NDALO_SKANIMIN:
             print(f"  (u ndal skanimi -- {streak_te_panevojshme} porosi rradhazi tashme te sinkronizuara e te pandryshuara)")
