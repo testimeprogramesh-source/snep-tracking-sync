@@ -1,52 +1,48 @@
-name: Sinkronizo Gjurmimin nga Ultra Post te Supabase
+name: Sinkronizo Gjurmimin nga Postman te Supabase
 
+# NJESOJ si sync.yml (Ultra Post), thjesht per portalin e Postman (Kosove).
 # Xhirohet ne 2 menyra:
-#   1) "0 6-17 * * *"  -- skanim i SHPEJTE, 1 here ne ORE (ne minutin :00),
-#      VETEM gjate orarit 08:00-19:00 (ora e Shqiperise, UTC+2 ne kohen
-#      verore). Oret 6-17 ne UTC = 08:00-19:00 ne Shqiperi (12 xhirime/dite:
-#      08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19).
-#      KUJDES (ndryshimi i ores ne Shqiperi, fund tetori): kur Shqiperia
-#      kalon ne oren dimerore (UTC+1), kjo dritare 6-17 UTC do te behet
-#      07:00-18:00 ne Shqiperi ne vend te 08:00-19:00 -- duhet rregulluar
-#      atehere ne 7-18.
-#   2) "30 2 * * *"    -- skanim i PLOTE, 1 here ne dite (02:30 UTC =
-#      04:30 ne Shqiperi, para se te fillojne skanimet e shpejta):
-#      kalon te GJITHA pakot, per te kapur çdo pako qe skanimi i shpejte
-#      mund ta kete "harruar" (p.sh. nje pako e vjeter qe befas ndryshon).
+#   1) "15 6-17 * * *" -- skanim i SHPEJTE, 1 here ne ORE (ne minutin :15,
+#      i zhvendosur pak nga ai i Ultra Post qe eshte ne :00, thjesht qe te
+#      mos xhirohen te dy NE TE NJEJTIN sekond -- s'ka nevoje reale, por
+#      eshte praktike e mire), VETEM gjate orarit 08:00-19:00 (ora e
+#      Kosoves/Shqiperise, UTC+2 ne kohen verore -- te dyja vendet ndjekin
+#      te njejtin rregull DST evropian).
+#      KUJDES (ndryshimi i ores ne fund tetori): kur kalon ne oren dimerore
+#      (UTC+1), kjo dritare 6-17 UTC do te behet 07:00-18:00 ne vend te
+#      08:00-19:00 -- duhet rregulluar atehere ne 7-18 (njesoj si sync.yml).
+#   2) "45 2 * * *" -- skanim i PLOTE, 1 here ne dite (02:45 UTC, 15 min
+#      pas atij te Ultra Post ne 02:30): kalon te GJITHA porosite, per te
+#      kapur çdo porosi qe skanimi i shpejte mund ta kete "harruar".
 # Mund te xhirohet edhe manualisht nga skeda "Actions" (buton "Run
-# workflow"), ne cdo kohe (pa kufizim orari) -- me mundesi per te zgjedhur
-# skanim te plote nga kutia e checkbox-it.
+# workflow"), ne cdo kohe (pa kufizim orari).
 on:
   schedule:
-    - cron: "0 6-17 * * *"
-    - cron: "30 2 * * *"
+    - cron: "15 6-17 * * *"
+    - cron: "45 2 * * *"
   workflow_dispatch:
     inputs:
       full_scan:
-        description: "Skano TE GJITHA pakot (jo vetem ndryshimet)"
+        description: "Skano TE GJITHA porosite (jo vetem ndryshimet)"
         type: boolean
         default: false
 
-# MBROJTJE (21/09/2026): mos lejo 2 xhirime NJEKOHESISHT (p.sh. nje
-# "Run workflow" manual pikerisht kur nis edhe ai automatik) -- do te
-# thoshte 2 sesione Selenium qe perpiqen te hyjne ne portalin e Ultra
-# Post ne te NJEJTEN kohe me te njejten llogari, gje qe mund te
-# shkaktoje perplasje/gabime. Nese nje xhirim eshte ende ne pune, çdo
-# xhirim tjeter (qofte manual apo automatik) PRET ne radhe (nuk
-# anulohet, thjesht xhirohet pasi te mbaroje i pari).
+# MBROJTJE: mos lejo 2 xhirime NJEKOHESISHT te Postman-it (njesoj si
+# sync.yml per Ultra Post -- shih shpjegimin atje). Grup i VEÇANTE
+# ("sync-postman", jo "sync-ultra-post"), keshtu qe nje xhirim i Ultra
+# Post s'e pret kurre nje te Postman-it, dhe anasjelltas -- jane 2
+# portale te ndryshme, mund te xhirohen paralelisht pa problem.
 concurrency:
-  group: sync-ultra-post
+  group: sync-postman
   cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # 180 min (3 ore): skanimi i PLOTE i pare ("backfill"-i, ~30 dite histori
-    # me 50+/dite = ~1500 pako per t'u hapur nje-nga-nje) mund te marre me
-    # shume se 45 min. 45 min DESHTOI ne praktike (20/09/2026) -- u rrit.
-    # Xhirimet e ardhshme te plota do te jene MË TE SHPEJTA (shumica e
-    # pakove tashme jane "seen" -- shih ultra_parcels_seen), keshtu qe ky
-    # kufi i larte praktikisht s'do te arrihet me pas backfill-it te pare.
+    # Njesoj si Ultra Post: skanimi i PLOTE i pare ("backfill"-i) mund te
+    # marre kohe -- 180 min (3 ore) si masë sigurie, edhe pse me filtrin e
+    # statuseve aktive (shih postman_portal_scrape.py) pritet te jete shume
+    # me i shpejte se backfill-i i pare i Ultra Post.
     timeout-minutes: 180
 
     steps:
@@ -64,25 +60,20 @@ jobs:
       - name: Instalo varesite Python
         run: pip install selenium webdriver-manager requests
 
-      - name: Xhiro sinkronizimin (skanon vete te gjitha pakot e reja/ndryshuara)
+      - name: Xhiro sinkronizimin (skanon vete te gjitha porosite e reja/ndryshuara)
         env:
-          ULTRA_USERNAME: ${{ secrets.ULTRA_USERNAME }}
-          ULTRA_PASSWORD: ${{ secrets.ULTRA_PASSWORD }}
+          POSTMAN_USERNAME: ${{ secrets.POSTMAN_USERNAME }}
+          POSTMAN_PASSWORD: ${{ secrets.POSTMAN_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          FULL_SCAN: ${{ (github.event.schedule == '30 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
-        run: python ultra_portal_scrape.py
+          FULL_SCAN: ${{ (github.event.schedule == '45 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
+        run: python postman_portal_scrape.py
 
-      # Nese ndonje hap deshton (timeout, element i pagjetur, etj.), script-i
-      # ruan vete nje foto ekrani (.png) + HTML-in e faqes (.html) ne dosjen
-      # debug/. Ky hap i ngarkon ato si skedar te shkarkueshem te vete xhirimi
-      # -- "if: always()" ben qe te ngarkohen edhe nese hapi i mesiperm
-      # deshton (exit code != 0), jo vetem kur "duket" i suksesshem.
       - name: Ngarko diagnostikimin (nese ka)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-${{ github.run_number }}
+          name: debug-postman-${{ github.run_number }}
           path: debug/
           if-no-files-found: ignore
           retention-days: 5
