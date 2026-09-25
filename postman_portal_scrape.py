@@ -525,9 +525,13 @@ def _kliko_diten_ne_kalendar(driver, wait, data_target):
     # "ant-picker-cell-in-view" dallon diten e MUAJIT TE SHFAQUR nga ditet
     # gri te muajit fqinj (qe mund te kene te njejtin numer, p.sh. "30" ne
     # fund te nje muaji 31-ditor) -- konfirmuar live ne DOM.
+    # ZBULUAR (run i deshtuar ne GitHub Actions): duhet klikuar VETE div-i
+    # ".ant-picker-cell-inner" (brenda <td>), JO vete <td>-ja -- Selenium
+    # merr "element click intercepted" nese klikojme <td>-ne, sepse pika e
+    # klikimit "kapet" ne fakt nga div-i i saj i brendshem.
     dita_xpath = (
         "//td[contains(@class,'ant-picker-cell-in-view')]"
-        f"[.//div[contains(@class,'ant-picker-cell-inner')][normalize-space(text())='{data_target.day}']]"
+        f"/div[contains(@class,'ant-picker-cell-inner')][normalize-space(text())='{data_target.day}']"
     )
     wait.until(EC.element_to_be_clickable((By.XPATH, dita_xpath))).click()
 
@@ -594,10 +598,17 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
         driver.execute_script("arguments[0].scrollTop = arguments[1];", viewport, pozicioni)
         time.sleep(0.2)
         for rresht in driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID):
-            row_index = rresht.get_attribute("row-index")
-            if not row_index or row_index in rezultati:
-                continue
+            # ZBULUAR (run i deshtuar ne GitHub Actions): edhe VETE leximi i
+            # atributit "row-index" mund te deshtoje me
+            # StaleElementReferenceException -- AG Grid mund ta rikrijoje
+            # rreshtin (per shkak te scroll-it) SAKTESISHT mes momentit kur e
+            # gjejme (find_elements) dhe momentit kur e lexojme. E gjithe
+            # pjesa qe prek "rresht"-in duhet te jete brenda te NJEJTIT
+            # try/except, jo vetem _lexo_qelizat_rreshtit().
             try:
+                row_index = rresht.get_attribute("row-index")
+                if not row_index or row_index in rezultati:
+                    continue
                 qelizat = _lexo_qelizat_rreshtit(rresht)
             except StaleElementReferenceException:
                 continue
