@@ -220,21 +220,25 @@ def login_to_postman(username: str, password: str, headless: bool = True):
         fusha_username.send_keys(username)
         fusha_fjalekalim.send_keys(password)
 
-        # Butoni i login-it -- ZBULUAR (25/09/2026, nga log-u i ri i
-        # diagnostikimit): faqja ka DY elemente qe permbajne tekstin "Kyçu"
-        # -- njeri eshte nje buton/link NE KRYE te faqes (thjesht navigim
-        # drejt /login, PA lidhje me formularin), dhe VETEM tjetri (poshte
-        # fushave, pas "Rikthe fjalëkalimin") eshte butoni i VERTETE qe
-        # dorezon formularin. Kerkimi sipas TEKSTIT ("contains(., 'Kyçu')")
-        # gjente GABIMISHT te parin (Selenium kthen gjithnje elementin e
-        # PARE ne renditjen e dokumentit qe perputhet), e klikonte, dhe
-        # s'ndodhte asgje -- pikerisht simptoma qe verejtem ne log (klikimi
-        # "suksesshem", pa gabim, por URL-ja s'ndryshonte kurre). Zgjidhja:
-        # gjejme butonin e VERTETE nga atributi i tij "type='submit'" (i
-        # konfirmuar UNIK ne faqe permes inspektimit direkt te DOM-it), jo
-        # nga teksti.
+        # Butoni i login-it -- ZBULUAR (25/09/2026, nga 2 raunde inspektimi
+        # direkt te DOM-i): faqja ka DY elemente qe permbajne tekstin "Kyçu"
+        # -- njeri eshte nje buton/link NE KRYE te faqes, class="ant-dropdown-
+        # link" (thjesht navigim drejt /login, PA lidhje me formularin), dhe
+        # VETEM tjetri (poshte fushave, pas "Rikthe fjalëkalimin") eshte
+        # butoni i VERTETE qe dorezon formularin, class permban "loginButton".
+        # DY GABIME te renditura qe i hasem:
+        #   1) Kerkimi sipas TEKSTIT ("contains(., 'Kyçu')") gjente GABIMISHT
+        #      te parin (elementi i pare ne renditjen e dokumentit).
+        #   2) Kerkimi sipas "type='submit'" DUKEJ i sigurt (e pame nje here
+        #      keshtu ne inspektim), por atributi "type" i butonit te
+        #      vertete NDRYSHON mes "button"/"submit" varesisht momentit te
+        #      "hidratimit" te faqes (sjellje e vete Ant Design) -- pra s'eshte
+        #      i qendrueshem per Selenium.
+        # Zgjidhja PERFUNDIMTARE: identifikojme butonin nga KLASA e tij
+        # "loginButton", qe eshte konstante dhe UNIKE ne faqe (e konfirmuar
+        # 2 here permes inspektimit live te DOM-it).
         butoni_kycu = wait.until(EC.element_to_be_clickable(
-            (By.CSS_SELECTOR, "button[type='submit']")
+            (By.CSS_SELECTOR, "button.loginButton")
         ))
         butoni_kycu.click()
 
