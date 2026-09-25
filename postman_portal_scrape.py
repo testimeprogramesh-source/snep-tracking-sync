@@ -89,6 +89,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
     StaleElementReferenceException,
+    ElementClickInterceptedException,
 )
 
 
@@ -501,7 +502,35 @@ def _kliko_faqen_tjeter(driver) -> bool:
         klasa = next_li.get_attribute("class") or ""
         if "ant-pagination-disabled" in klasa:
             return False
-        next_li.find_element(By.CSS_SELECTOR, "button").click()
+
+        # ZBULUAR (25/09/2026, run i deshtuar ne GitHub Actions): ndonjehere
+        # nje overlay "duke ngarkuar" (div gjysem-transparent qe mbulon
+        # GJITHE faqen, "fixed top-0 left-0 w-screen h-screen ... z-50")
+        # mbetet ende i dukshem nga veprimi i fundit (p.sh. hapja/mbyllja
+        # e tab-it te ri me detajet e porosise se fundit ne kete faqe) --
+        # nese klikojme "faqja tjeter" TEKSA ai eshte ende aty, Selenium
+        # merr ElementClickInterceptedException (klikon mbi overlay, jo
+        # mbi buton). Zgjidhja: presim qe overlay-i te zhduket PARA se te
+        # klikojme; nese s'zhduket brenda 15 sek (rast i rralle), vazhdojme
+        # gjithsesi dhe, nese na e pengon prap, klikojme direkt permes
+        # JavaScript-it, qe anashkalon çdo overlay mbi te.
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.invisibility_of_element_located(
+                    (By.CSS_SELECTOR, "div.fixed.top-0.left-0.w-screen.h-screen.z-50")
+                )
+            )
+        except TimeoutException:
+            pass
+
+        butoni = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "li.ant-pagination-next button"))
+        )
+        try:
+            butoni.click()
+        except ElementClickInterceptedException:
+            driver.execute_script("arguments[0].click();", butoni)
+
         time.sleep(1.2)
         return True
     except NoSuchElementException:
