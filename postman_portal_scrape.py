@@ -137,6 +137,12 @@ SEL_GRID_VIEWPORT = "div.ag-body-viewport"
 
 MAX_FAQE_SKANIM = 150
 STREAK_NDALO_SKANIMIN = 50
+# Nese kaq porosi RRADHAZI dalin "shume te vjetra" (jashte dritares se
+# "dite_prapa" diteve), ndalojme skanimin KREJT -- shih shenimin tek
+# scan_all_parcels(). Bazohet te supozimi qe lista e Postman-it eshte e
+# renditur vetvetiu nga porosia ME E REJA te ajo ME E VJETRA (konfirmuar
+# live: ID-te e porosive zbresin ne rradhe -- 4391192, 4390553, 4390484...).
+JASHTE_DRITARES_RRESHTA_NDALO = 80
 DITE_MAX_SINKRONIZIM = 30
 
 # Statuset e MUNDSHME (te verifikuara live nga dropdown-i "Statusi") --
@@ -379,6 +385,30 @@ def get_order_history_ne_tab_te_re(driver, postman_id: str) -> list:
         driver.switch_to.window(tab_kryesor)
 
 
+def _kerko_me_rikthim(metoda, url, tentativa_max=3, **kwargs):
+    """
+    Njesoj si requests.post(...)/requests.get(...), por RIPROVON automatikisht
+    (deri "tentativa_max" here, me nje pauze qe rritet mes tentativave) nese
+    lidhja me Supabase-in DESHTON PERKOHESISHT (timeout, gabim rrjeti).
+    ZBULUAR (26/09/2026, run i deshtuar ne GitHub Actions): nje skanim i
+    gjate (qindra thirrje HTTP rradhazi drejt Supabase) here pas here has
+    NJE lidhje qe ngec per pak sekonda (ReadTimeoutError) -- pa riprovim,
+    kjo e ndalonte GJITHE skanimin, çka eshte humbje e panevojshme, sepse
+    ngjarjet tashme ishin lexuar nga faqja e Postman-it (pjesa e ngadalte
+    dhe e brishte), thjesht SHKRIMI ne Supabase deshtoi per nje moment.
+    """
+    fundit_gabim = None
+    for tentativa in range(1, tentativa_max + 1):
+        try:
+            return metoda(url, **kwargs)
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+            fundit_gabim = e
+            if tentativa < tentativa_max:
+                print(f"  (kujdes: lidhja me Supabase deshtoi perkohesisht, tentativa {tentativa}/{tentativa_max} -- riprovojme...)")
+                time.sleep(3 * tentativa)
+    raise fundit_gabim
+
+
 def push_to_supabase(order_number: str, barcode: str, events: list, courier: str = "postman"):
     """Upsert ne public.tracking_events (e njejta tabele qe perdor Ultra Post, e dalluar nga 'courier')."""
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
@@ -403,7 +433,8 @@ def push_to_supabase(order_number: str, barcode: str, events: list, courier: str
     if not rows:
         return
 
-    resp = requests.post(
+    resp = _kerko_me_rikthim(
+        requests.post,
         f"{supabase_url}/rest/v1/tracking_events",
         headers={
             "apikey": service_key,
@@ -413,7 +444,7 @@ def push_to_supabase(order_number: str, barcode: str, events: list, courier: str
         },
         params={"on_conflict": "order_number,event_time,status_label"},
         json=rows,
-        timeout=20,
+        timeout=30,
     )
     if not resp.ok:
         print(f"  -> Supabase ktheu {resp.status_code}: {resp.text}")
@@ -433,7 +464,8 @@ def fetch_seen_parcels() -> dict:
     madhesia_faqes = 1000
     fillimi = 0
     while True:
-        resp = requests.get(
+        resp = _kerko_me_rikthim(
+            requests.get,
             f"{supabase_url}/rest/v1/postman_parcels_seen",
             headers={
                 "apikey": service_key,
@@ -459,7 +491,8 @@ def upsert_seen_parcel(postman_id: str, order_number: str, status_raw: str, acti
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
     service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-    resp = requests.post(
+    resp = _kerko_me_rikthim(
+        requests.post,
         f"{supabase_url}/rest/v1/postman_parcels_seen",
         headers={
             "apikey": service_key,
@@ -475,7 +508,7 @@ def upsert_seen_parcel(postman_id: str, order_number: str, status_raw: str, acti
             "active": active,
             "last_synced_at": datetime.now(timezone.utc).isoformat(),
         }],
-        timeout=20,
+        timeout=30,
     )
     if not resp.ok:
         print(f"  -> Supabase (postman_parcels_seen) ktheu {resp.status_code}: {resp.text}")
@@ -487,7 +520,8 @@ def cleanup_old_events():
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
     service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-    resp = requests.post(
+    resp = _kerko_me_rikthim(
+        requests.post,
         f"{supabase_url}/rest/v1/rpc/cleanup_old_tracking_events",
         headers={
             "apikey": service_key,
@@ -743,7 +777,9 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
     _vendos_madhesine_maksimale_faqes(driver, wait)
 
     streak_te_panevojshme = 0
+    jashte_dritares_radhazi = 0
     faqe_nr = 1
+    ndaloji_krejt = False
 
     while True:
         rreshtat_te_dhena = _mblidh_rreshtat_e_faqes_me_scroll(driver)
@@ -775,6 +811,47 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             ngjarjet = get_order_history_ne_tab_te_re(driver, postman_id)
             eshte_perfundimtar = statusi in STATUSET_PERFUNDIMTARE
 
+            # MBROJTJE PER BAZEN E TE DHENAVE (26/09/2026): filtri i dates ne
+            # faqen e Postman-it (_vendos_filtrin_e_dates) NUK eshte gjithmone
+            # i qendrueshem (kalendari i faqes eshte i brishte per automatizim)
+            # -- ne disa xhirime bie dhe skanimi kthehet ne GJITHE historikun
+            # (edhe porosi te vitit 2024). Qe baza e te dhenave TE MOS mbushet
+            # me porosi kaq te vjetra pavaresisht filtrit te faqes, e
+            # kontrollojme VETE, ne kod, daten E VERTETE te ngjarjes se fundit
+            # te kesaj porosie (qe tashme e kemi, sapo e lexuam me siper) --
+            # nese eshte me e vjeter se "dite_prapa" dite, s'e shkruajme ne
+            # tracking_events, VETEM e shenojme "e njohur" (qe skanimet e
+            # ardhshme ta kapercejne shpejt, pa e rihapur fare).
+            data_e_fundit = None
+            for e in ngjarjet:
+                try:
+                    dt = datetime.fromisoformat(e["event_time"])
+                except (ValueError, KeyError):
+                    continue
+                if data_e_fundit is None or dt > data_e_fundit:
+                    data_e_fundit = dt
+
+            data_prerjes = datetime.now(timezone(timedelta(hours=2))) - timedelta(days=dite_prapa)
+
+            if data_e_fundit is not None and data_e_fundit < data_prerjes:
+                upsert_seen_parcel(postman_id, order_number, statusi, active=False)
+                seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": False}
+                jashte_dritares_radhazi += 1
+                print(f"  Porosia {kodi} (referenca {order_number}): shume e vjeter ({data_e_fundit.date()}) -- s'u ruajt ne tracking_events. ({jashte_dritares_radhazi}/{JASHTE_DRITARES_RRESHTA_NDALO} rradhazi)")
+                # NDALIM I HERSHEM: meqe lista duket e renditur nga me e reja
+                # te me e vjetra (shih JASHTE_DRITARES_RRESHTA_NDALO me siper),
+                # nese kaq porosi RRADHAZI jane te gjitha jashte dritares qe na
+                # intereson, s'ka pse te vazhdojme me thelle -- gjithçka pas
+                # ketij pikut do te jete VETEM edhe me e vjeter. Kjo kursen
+                # kohe DHE ngarkese te panevojshme (s'hapim mijera tabe per
+                # porosi qe gjithsesi s'do t'i ruajme).
+                if jashte_dritares_radhazi >= JASHTE_DRITARES_RRESHTA_NDALO:
+                    print(f"  (u ndal skanimi -- {jashte_dritares_radhazi} porosi rradhazi jashte dritares se {dite_prapa} diteve)")
+                    ndaloji_krejt = True
+                    break
+                continue
+
+            jashte_dritares_radhazi = 0
             push_to_supabase(order_number, kodi, ngjarjet, courier="postman")
             upsert_seen_parcel(postman_id, order_number, statusi, active=not eshte_perfundimtar)
             seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": not eshte_perfundimtar}
@@ -783,6 +860,9 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             # SHENIM: falë tab-it te ri (get_order_history_ne_tab_te_re), lista
             # dhe faqja/pagination-i i saj NUK preken fare -- s'ka nevoje te
             # rikthehemi ose te riklikojme asgje ketu.
+
+        if ndaloji_krejt:
+            break
 
         if not full_scan and streak_te_panevojshme >= STREAK_NDALO_SKANIMIN:
             print(f"  (u ndal skanimi -- {streak_te_panevojshme} porosi rradhazi tashme te sinkronizuara e te pandryshuara)")
