@@ -41,6 +41,12 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # 180 min (3 ore): skanimi i PLOTE i pare ("backfill"-i, ~30 dite histori
+    # me 50+/dite = ~1500 pako per t'u hapur nje-nga-nje) mund te marre me
+    # shume se 45 min. 45 min DESHTOI ne praktike (20/09/2026) -- u rrit.
+    # Xhirimet e ardhshme te plota do te jene MË TE SHPEJTA (shumica e
+    # pakove tashme jane "seen" -- shih ultra_parcels_seen), keshtu qe ky
+    # kufi i larte praktikisht s'do te arrihet me pas backfill-it te pare.
     timeout-minutes: 180
 
     steps:
@@ -65,8 +71,17 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FULL_SCAN: ${{ (github.event.schedule == '30 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
+          # SHTUAR (25/09/2026): njesoj si sync-postman.yml -- pa kete,
+          # print()-et grumbullohen dhe s'shfaqen ne log ne kohe reale,
+          # duke e bere run-in te "dukej" i ngecur edhe kur po punonte mire.
+          PYTHONUNBUFFERED: "1"
         run: python ultra_portal_scrape.py
 
+      # Nese ndonje hap deshton (timeout, element i pagjetur, etj.), script-i
+      # ruan vete nje foto ekrani (.png) + HTML-in e faqes (.html) ne dosjen
+      # debug/. Ky hap i ngarkon ato si skedar te shkarkueshem te vete xhirimi
+      # -- "if: always()" ben qe te ngarkohen edhe nese hapi i mesiperm
+      # deshton (exit code != 0), jo vetem kur "duket" i suksesshem.
       - name: Ngarko diagnostikimin (nese ka)
         if: always()
         uses: actions/upload-artifact@v4
