@@ -533,7 +533,29 @@ def _kliko_diten_ne_kalendar(driver, wait, data_target):
         "//td[contains(@class,'ant-picker-cell-in-view')]"
         f"/div[contains(@class,'ant-picker-cell-inner')][normalize-space(text())='{data_target.day}']"
     )
-    wait.until(EC.element_to_be_clickable((By.XPATH, dita_xpath))).click()
+    dita_el = wait.until(EC.element_to_be_clickable((By.XPATH, dita_xpath)))
+    try:
+        dita_el.click()
+    except ElementClickInterceptedException:
+        # ZBULUAR (run i deshtuar ne GitHub Actions): nese e para fushe
+        # ("Prej datës") sapo u mbyll, kalendari i saj mund te jete ende
+        # ne "animacion mbylljeje" (fade-out) teksa hapim te dytin ("Deri
+        # me") -- per nje çast te dy kalendaret jane ne DOM, njeri sipas
+        # tjetrit, dhe klikimi normal "kapet" nga qeliza e kalendarit te
+        # VJETER (te njejtin lloj elementi -- "ant-picker-cell-inner").
+        # Klikimi permes JavaScript-it anashkalon kete, sepse s'i intereson
+        # cili element eshte "sipër" vizualisht.
+        driver.execute_script("arguments[0].click();", dita_el)
+
+    # Presim qe VETE paneli i kalendarit te zhduket krejtesisht nga DOM-i
+    # PARA se te vazhdojme te fusha tjeter -- kjo eshte zgjidhja rrenjesore
+    # per problemin e mesiperm (jo vetem nje "patch" per simptomen).
+    try:
+        WebDriverWait(driver, 5).until(
+            EC.invisibility_of_element_located((By.CSS_SELECTOR, ".ant-picker-dropdown"))
+        )
+    except TimeoutException:
+        pass
 
 
 def _vendos_filtrin_e_dates(driver, wait, dite_prapa: int) -> bool:
@@ -570,6 +592,16 @@ def _vendos_filtrin_e_dates(driver, wait, dite_prapa: int) -> bool:
         return True
     except Exception as e:
         print(f"  (kujdes: s'u vendos dot filtri i dates -- {e} -- vazhdojme PA filter)")
+        # SIGURI: nese diçka deshtoi ne MES te vendosjes se filtrit (p.sh.
+        # fusha e pare u vendos, e dyta jo), rifreskojme faqen nga e para,
+        # qe te mos mbetemi ne nje gjendje "gjysem-filtruar" te papritur --
+        # me mire pa filter fare (skanon me shume, por sakte) se sa filter
+        # i gabuar (mund te humbase porosi pa e kuptuar).
+        try:
+            driver.get(URL_LISTA_POROSIVE)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
+        except Exception:
+            pass
         return False
 
 
