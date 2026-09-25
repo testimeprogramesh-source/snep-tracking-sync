@@ -1,0 +1,75 @@
+name: Sinkronizo Gjurmimin nga Postman te Supabase
+
+# NJESOJ si sync.yml (Ultra Post), thjesht per portalin e Postman (Kosove).
+# Xhirohet ne 2 menyra:
+#   1) "15 6-17 * * *" -- skanim i SHPEJTE, 1 here ne ORE (ne minutin :15,
+#      i zhvendosur pak nga ai i Ultra Post qe eshte ne :00, thjesht qe te
+#      mos xhirohen te dy NE TE NJEJTIN sekond -- s'ka nevoje reale, por
+#      eshte praktike e mire), VETEM gjate orarit 08:00-19:00 (ora e
+#      Kosoves/Shqiperise, UTC+2 ne kohen verore -- te dyja vendet ndjekin
+#      te njejtin rregull DST evropian).
+#      KUJDES (ndryshimi i ores ne fund tetori): kur kalon ne oren dimerore
+#      (UTC+1), kjo dritare 6-17 UTC do te behet 07:00-18:00 ne vend te
+#      08:00-19:00 -- duhet rregulluar atehere ne 7-18 (njesoj si sync.yml).
+#   2) "45 2 * * *" -- skanim i PLOTE, 1 here ne dite (02:45 UTC, 15 min
+#      pas atij te Ultra Post ne 02:30): kalon te GJITHA porosite, per te
+#      kapur çdo porosi qe skanimi i shpejte mund ta kete "harruar".
+# Mund te xhirohet edhe manualisht nga skeda "Actions" (buton "Run
+# workflow"), ne cdo kohe (pa kufizim orari).
+on:
+  schedule:
+    - cron: "15 6-17 * * *"
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: "Skano TE GJITHA porosite (jo vetem ndryshimet)"
+        type: boolean
+        default: false
+
+# MBROJTJE: mos lejo 2 xhirime NJEKOHESISHT te Postman-it (njesoj si
+# sync.yml per Ultra Post -- shih shpjegimin atje). Grup i VEÇANTE
+# ("sync-postman", jo "sync-ultra-post"), keshtu qe nje xhirim i Ultra
+# Post s'e pret kurre nje te Postman-it, dhe anasjelltas -- jane 2
+# portale te ndryshme, mund te xhirohen paralelisht pa problem.
+concurrency:
+  group: sync-postman
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Merr kodin e repository-t
+        uses: actions/checkout@v4
+
+      - name: Instalo Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalo Chrome (per Selenium)
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Instalo varesite Python
+        run: pip install selenium webdriver-manager requests
+
+      - name: Xhiro sinkronizimin (skanon vete te gjitha porosite e reja/ndryshuara)
+        env:
+          POSTMAN_USERNAME: ${{ secrets.POSTMAN_USERNAME }}
+          POSTMAN_PASSWORD: ${{ secrets.POSTMAN_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FULL_SCAN: ${{ (github.event.schedule == '45 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
+        run: python postman_portal_scrape.py
+
+      - name: Ngarko diagnostikimin (nese ka)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-postman-${{ github.run_number }}
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 5
