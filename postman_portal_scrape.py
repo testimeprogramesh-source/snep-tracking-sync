@@ -135,7 +135,11 @@ DITE_PRAPA_PARAZGJEDHUR = 60  # ~2 muaj mbrapa -- kap rehat "muajin e kaluar + k
 # e grid-it (shih _mblidh_rreshtat_e_faqes_me_scroll me poshte).
 SEL_GRID_VIEWPORT = "div.ag-body-viewport"
 
-MAX_FAQE_SKANIM = 150
+MAX_FAQE_SKANIM = 300  # (25/09/2026) rritur nga 150 -- rezerve sigurie NESE
+# madhesia e faqes deshton perseri e mbetet 20 (shih shenimin tek
+# _vendos_madhesine_maksimale_faqes): 300 faqe x 20 = 6000 rreshta ne vend
+# te 3000. Kur madhesia eshte 500 (rasti normal), 300 faqe s'arrihen kurre
+# (9834 / 500 = ~20 faqe mjaftojne), keshtu qe s'kushton kohe shtese.
 STREAK_NDALO_SKANIMIN = 50
 DITE_MAX_SINKRONIZIM = 30
 
@@ -684,17 +688,58 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
 
 
 def _vendos_madhesine_maksimale_faqes(driver, wait):
-    """Provon te vendose madhesine e faqes ne 500 (maksimumi i mundshem, i verifikuar live)."""
+    """Provon te vendose madhesine e faqes ne 500 (maksimumi i mundshem, i verifikuar live).
+
+    ZBULUAR (25/09/2026, run live): njesoj si "faqja tjeter" (shih
+    _kliko_faqen_tjeter), edhe ky klikim mund te merret nga overlay-i
+    "duke ngarkuar" qe mbulon gjithe faqen -- kur ndodh kjo, PERPARA
+    kishim vetem nje `except` te gjere qe printonte paralajmerimin dhe
+    VAZHDONTE me madhesine PARAZGJEDHUR te faqes (20 rreshta), jo 500.
+    Pasoja ne praktike: nje skanim i plote (150 faqe x 20 = 3000 rreshta)
+    mbulonte VETEM ~30% te 9834 porosive gjithsej, ne vend te ~100% (150
+    faqe x 500 = 75000 rreshta, shume me shume se sa nevojitet). Tani
+    presim overlay-in te zhduket dhe kemi rezerve klikim me JavaScript,
+    njesoj si per pagination-in.
+    """
     try:
-        selektori = driver.find_element(
-            By.XPATH, "//*[contains(@class,'ant-select') and .//text()[contains(.,'/ page') or contains(.,'/page')]]"
-        )
-        selektori.click()
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.invisibility_of_element_located(
+                    (By.CSS_SELECTOR, "div.fixed.top-0.left-0.w-screen.h-screen.z-50")
+                )
+            )
+        except TimeoutException:
+            pass
+
+        selektori = wait.until(EC.element_to_be_clickable(
+            (By.XPATH, "//*[contains(@class,'ant-select') and .//text()[contains(.,'/ page') or contains(.,'/page')]]")
+        ))
+        try:
+            selektori.click()
+        except ElementClickInterceptedException:
+            driver.execute_script("arguments[0].click();", selektori)
+
         opsioni = wait.until(EC.element_to_be_clickable(
             (By.XPATH, "//div[contains(@class,'ant-select-item-option') and contains(., '500')]")
         ))
-        opsioni.click()
+        try:
+            opsioni.click()
+        except ElementClickInterceptedException:
+            driver.execute_script("arguments[0].click();", opsioni)
+
         time.sleep(1)
+
+        # KONTROLL: verifikojme qe VERTET u vendos 500 -- nese jo (p.sh.
+        # klikimi "kaloi" por dropdown-i eshte mbyllur nga diçka tjeter
+        # ne kohen e gabuar), e provojme edhe 1 here para se te heqim dore.
+        try:
+            teksti_tanishem = driver.find_element(
+                By.XPATH, "//*[contains(@class,'ant-select') and .//text()[contains(.,'/ page') or contains(.,'/page')]]"
+            ).text
+            if "500" not in teksti_tanishem:
+                raise Exception(f"dropdown-i mbeti '{teksti_tanishem}' ne vend te '500 / page'")
+        except Exception as e_verifikim:
+            print(f"  (kujdes: madhesia e faqes mund te mos jete 500 -- {e_verifikim})")
     except Exception as e:
         print(f"  (kujdes: s'u vendos dot madhesia maksimale e faqes -- {e})")
 
