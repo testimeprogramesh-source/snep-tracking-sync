@@ -39,6 +39,17 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # RRITUR (25/09/2026, nga 180 ne 350): backfill-i i pare i Postman
+    # duhet te hape faqen e detajeve NJE-NGA-NJE per ~9834 porosi (shumica
+    # kurre s'jane pare me pare), gje qe ne praktike mori me shume se 3 ore
+    # dhe u ndal nga vete GitHub Actions (timeout), JO nga nje gabim ne
+    # kod -- shih "Error: The operation was canceled." ne log. 350 min
+    # (~5.8 ore) eshte pothuajse maksimumi i lejuar nga GitHub (360 min).
+    # RRUAJTJA E PROGRESIT: çdo porosi e perpunuar (qofte e shkruar ne
+    # tracking_events, qofte thjesht e shenuar "shume e vjeter") ruhet
+    # MENJEHERE ne postman_parcels_seen -- pra edhe nese run-i ndalet nga
+    # timeout-i, progresi deri atehere s'humbet: run-i tjeter e vazhdon
+    # aty ku e la, s'e rifillon nga zero.
     timeout-minutes: 350
 
     steps:
@@ -63,6 +74,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FULL_SCAN: ${{ (github.event.schedule == '45 2 * * *' || github.event.inputs.full_scan == 'true') && '1' || '' }}
+          # SHTUAR (25/09/2026): pa kete, python "grumbullon" (buffer-on)
+          # mesazhet e print() dhe s'i dergon ne log te GitHub Actions ne
+          # kohe reale -- run-i DUKET i ngecur (asnje rresht i ri per shume
+          # kohe), edhe pse po punon normalisht ne sfond. Me kete, çdo
+          # rresht print() shfaqet MENJEHERE ne log.
+          PYTHONUNBUFFERED: "1"
         run: python postman_portal_scrape.py
 
       - name: Ngarko diagnostikimin (nese ka)
