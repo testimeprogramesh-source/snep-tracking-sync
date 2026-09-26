@@ -657,10 +657,27 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
     lartesia_dukshme = driver.execute_script("return arguments[0].clientHeight;", viewport) or 1
     hapi = max(int(lartesia_dukshme * 0.85), 200)  # mbivendosje e vogel, per te mos humbur rreshta
 
+    # SHTUAR (27/09/2026): presim qe overlay-i "duke ngarkuar" te zhduket
+    # PARA se te fillojme leximin -- sidomos per FAQEN E PARE, qe lexohet
+    # menjehere pas ndryshimit te madhesise se faqes (20 -> 500), kur grid-i
+    # mund te jete ende duke "mbushur" qelizat.
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.invisibility_of_element_located(
+                (By.CSS_SELECTOR, "div.fixed.top-0.left-0.w-screen.h-screen.z-50")
+            )
+        )
+    except TimeoutException:
+        pass
+    time.sleep(1.5)
+
+    def _eshte_i_plote(q):
+        return bool(q.get("displayId")) and bool((q.get("refid") or "").strip())
+
     pozicioni = 0
     while True:
         driver.execute_script("arguments[0].scrollTop = arguments[1];", viewport, pozicioni)
-        time.sleep(0.2)
+        time.sleep(0.3)
         for rresht in driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID):
             # ZBULUAR (run i deshtuar ne GitHub Actions): edhe VETE leximi i
             # atributit "row-index" mund te deshtoje me
@@ -671,7 +688,12 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
             # try/except, jo vetem _lexo_qelizat_rreshtit().
             try:
                 row_index = rresht.get_attribute("row-index")
-                if not row_index or row_index in rezultati:
+                # NDRYSHUAR (27/09/2026): PARA, nje rresht i lexuar NJE HERE
+                # (edhe nese "Referenca" ishte ende bosh, sepse grid-i s'e
+                # kishte mbushur akoma) s'rilexohej MË KURRE -- dhe me pas
+                # anashkalohej HESHTAZI ne scan_all_parcels ("pa referencë").
+                # Tani e rilexojme derisa te jete i PLOTE (kod + referencë).
+                if not row_index or (row_index in rezultati and _eshte_i_plote(rezultati[row_index])):
                     continue
                 qelizat = _lexo_qelizat_rreshtit(rresht)
             except StaleElementReferenceException:
@@ -682,6 +704,28 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
         if pozicioni >= lartesia_totale - lartesia_dukshme:
             break
         pozicioni += hapi
+
+    # KONTROLL I DYTE: nese ende ka rreshta pa referencë, kalojme edhe nje
+    # here gjithe faqen (grid-i ka pasur kohe te mbushet ndërkohë).
+    if any(not _eshte_i_plote(q) for q in rezultati.values()):
+        time.sleep(2)
+        pozicioni = 0
+        while True:
+            driver.execute_script("arguments[0].scrollTop = arguments[1];", viewport, pozicioni)
+            time.sleep(0.3)
+            for rresht in driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID):
+                try:
+                    row_index = rresht.get_attribute("row-index")
+                    if not row_index or (row_index in rezultati and _eshte_i_plote(rezultati[row_index])):
+                        continue
+                    qelizat = _lexo_qelizat_rreshtit(rresht)
+                except StaleElementReferenceException:
+                    continue
+                if qelizat.get("displayId"):
+                    rezultati[row_index] = qelizat
+            if pozicioni >= lartesia_totale - lartesia_dukshme:
+                break
+            pozicioni += hapi
 
     driver.execute_script("arguments[0].scrollTop = 0;", viewport)  # thjesht per pastërti vizuale
     return list(rezultati.values())
@@ -820,7 +864,13 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
 
     while True:
         rreshtat_te_dhena = _mblidh_rreshtat_e_faqes_me_scroll(driver)
-        print(f"  (faqja {faqe_nr}: {len(rreshtat_te_dhena)} rreshta u lexuan nga grid-i)")
+        # DIAGNOSTIKIM (27/09/2026): tregojme edhe kodin e PARE dhe te FUNDIT
+        # te faqes, qe te shohim ne log SAKTESISHT cilat porosi lexohen.
+        kodi_i_pare = rreshtat_te_dhena[0].get("displayId", "?") if rreshtat_te_dhena else "-"
+        kodi_i_fundit = rreshtat_te_dhena[-1].get("displayId", "?") if rreshtat_te_dhena else "-"
+        print(f"  (faqja {faqe_nr}: {len(rreshtat_te_dhena)} rreshta u lexuan nga grid-i, nga {kodi_i_pare} deri {kodi_i_fundit})")
+        nr_pa_referenca = 0
+        nr_te_njohura = 0
         for qelizat in rreshtat_te_dhena:
             kodi = qelizat.get("displayId", "")
             postman_id = _id_numerik_nga_kodi(kodi)
@@ -828,6 +878,9 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             statusi_raw = qelizat.get("statusDescription", "")
 
             if not postman_id or not order_number:
+                # PARA: anashkalohej HESHTAZI. Tani e numerojme dhe e
+                # tregojme ne fund te faqes.
+                nr_pa_referenca += 1
                 continue
 
             statusi = _nxirr_statusin_nga_rreshti(statusi_raw)
@@ -839,6 +892,7 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             )
 
             if e_panryshuar:
+                nr_te_njohura += 1
                 if not full_scan:
                     streak_te_panevojshme += 1
                 continue
@@ -891,6 +945,8 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             # SHENIM: falë tab-it te ri (get_order_history_ne_tab_te_re), lista
             # dhe faqja/pagination-i i saj NUK preken fare -- s'ka nevoje te
             # rikthehemi ose te riklikojme asgje ketu.
+
+        print(f"  (faqja {faqe_nr}: {nr_te_njohura} te njohura e te pandryshuara, {nr_pa_referenca} pa kod/referencë -- u anashkaluan)")
 
         if not full_scan and streak_te_panevojshme >= STREAK_NDALO_SKANIMIN:
             print(f"  (u ndal skanimi -- {streak_te_panevojshme} porosi rradhazi tashme te sinkronizuara e te pandryshuara)")
