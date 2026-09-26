@@ -50,7 +50,7 @@ jobs:
     # MENJEHERE ne postman_parcels_seen -- pra edhe nese run-i ndalet nga
     # timeout-i, progresi deri atehere s'humbet: run-i tjeter e vazhdon
     # aty ku e la, s'e rifillon nga zero.
-    timeout-minutes: 350
+    timeout-minutes: 650
 
     steps:
       - name: Merr kodin e repository-t
