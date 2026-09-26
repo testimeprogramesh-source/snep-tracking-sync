@@ -301,12 +301,23 @@ def _lexo_qelizat_rreshtit(rresht) -> dict:
         col_id = qeliza.get_attribute("col-id")
         if col_id:
             rezultati[col_id] = qeliza.text.strip()
+    # GJETUR SHKAKU (27/09/2026): qeliza "Kodi" permban DY rreshta -- kodin
+    # ("#2PD3-4391192") DHE poshte tij emrin e perdoruesit qe e krijoi
+    # porosine (p.sh. "snepks24"). Per porosite e REJA ky rresht i dyte
+    # ekziston, keshtu qe teksti mbaronte me emrin e perdoruesit dhe kodi
+    # s'njihej -- porosia anashkalohej HESHTAZI ("pa kod"). Mbajme VETEM
+    # rreshtin e pare.
+    if rezultati.get("displayId"):
+        rezultati["displayId"] = rezultati["displayId"].splitlines()[0].strip()
+    if rezultati.get("refid"):
+        rezultati["refid"] = rezultati["refid"].splitlines()[0].strip()
     return rezultati
 
 
 def _id_numerik_nga_kodi(kodi: str) -> str:
     """'#2PD3-4385237' -> '4385237' (pjesa pas vizes se fundit)."""
-    m = re.search(r"-(\d+)\s*$", kodi or "")
+    rreshti_i_pare = (kodi or "").splitlines()[0] if kodi else ""
+    m = re.search(r"-(\d+)", rreshti_i_pare)
     return m.group(1) if m else ""
 
 
@@ -796,6 +807,21 @@ def _kliko_faqen_tjeter(driver) -> bool:
         if "ant-pagination-disabled" in klasa:
             return False
 
+        # SHTUAR (27/09/2026): kujtojme kodin e rreshtit te PARE para klikimit,
+        # qe pas klikimit te presim derisa grid-i te shfaqe VERTET faqen e re
+        # (ne log u pa qe faqja 3 filloi me te njejtin kod si faqja 2).
+        def _kodi_i_rreshtit_te_pare():
+            try:
+                q = driver.find_element(By.CSS_SELECTOR, "div.ag-row[row-index='0'] div.ag-cell[col-id='displayId']")
+                return q.text.strip()
+            except Exception:
+                try:
+                    q = driver.find_element(By.CSS_SELECTOR, "div.ag-row div.ag-cell[col-id='displayId']")
+                    return q.text.strip()
+                except Exception:
+                    return ""
+        kodi_para = _kodi_i_rreshtit_te_pare()
+
         # ZBULUAR (25/09/2026, run i deshtuar ne GitHub Actions): ndonjehere
         # nje overlay "duke ngarkuar" (div gjysem-transparent qe mbulon
         # GJITHE faqen, "fixed top-0 left-0 w-screen h-screen ... z-50")
@@ -825,6 +851,15 @@ def _kliko_faqen_tjeter(driver) -> bool:
             driver.execute_script("arguments[0].click();", butoni)
 
         time.sleep(1.2)
+        if kodi_para:
+            fundi = time.time() + 25
+            while time.time() < fundi:
+                kodi_tani = _kodi_i_rreshtit_te_pare()
+                if kodi_tani and kodi_tani != kodi_para:
+                    break
+                time.sleep(0.5)
+            else:
+                print("  (kujdes: faqja e re s'u shfaq brenda 25 sek -- vazhdojme gjithsesi)")
         return True
     except NoSuchElementException:
         return False
