@@ -848,42 +848,21 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             ngjarjet = get_order_history_ne_tab_te_re(driver, postman_id)
             eshte_perfundimtar = statusi in STATUSET_PERFUNDIMTARE
 
-            # MBROJTJE PER BAZEN E TE DHENAVE (26/09/2026): filtri i dates ne
-            # faqen e Postman-it (_vendos_filtrin_e_dates) NUK eshte gjithmone
-            # i qendrueshem (kalendari i faqes eshte i brishte per automatizim)
-            # -- ne disa xhirime bie dhe skanimi kthehet ne GJITHE historikun
-            # (edhe porosi te vitit 2024). Qe baza e te dhenave TE MOS mbushet
-            # me porosi kaq te vjetra pavaresisht filtrit te faqes, e
-            # kontrollojme VETE, ne kod, daten E VERTETE te ngjarjes se fundit
-            # te kesaj porosie (qe tashme e kemi, sapo e lexuam me siper) --
-            # nese eshte me e vjeter se "dite_prapa" dite, s'e shkruajme ne
-            # tracking_events, VETEM e shenojme "e njohur" (qe skanimet e
-            # ardhshme ta kapercejne shpejt, pa e rihapur fare).
-            data_e_fundit = None
-            for e in ngjarjet:
-                try:
-                    dt = datetime.fromisoformat(e["event_time"])
-                except (ValueError, KeyError):
-                    continue
-                if data_e_fundit is None or dt > data_e_fundit:
-                    data_e_fundit = dt
-
-            data_prerjes = datetime.now(timezone(timedelta(hours=2))) - timedelta(days=dite_prapa)
-
-            if data_e_fundit is not None and data_e_fundit < data_prerjes:
-                upsert_seen_parcel(postman_id, order_number, statusi, active=False)
-                seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": False}
-                print(f"  Porosia {kodi} (referenca {order_number}): shume e vjeter ({data_e_fundit.date()}) -- s'u ruajt ne tracking_events.")
-                # HEQUR (26/09/2026): kishim NJE ndalim te hershem ketu ("nese
-                # 80 porosi rradhazi jane te vjetra, ndalo krejt"), bazuar te
-                # supozimi qe lista eshte e renditur nga me e reja te me e
-                # vjetra. Ai supozim DOLI I GABUAR -- konfirmuar live: porosite
-                # ME TE REJA (2026, muajt e fundit) MUNGONIN krejt nga baza e
-                # te dhenave sepse skanimi ndalonte shume heret (te fillimi i
-                # listes, ku jane porosi te 2024-it). Tani kalojme GJITHE
-                # listen pa ndalur para kohe -- me e ngadalte, por e sakte.
-                continue
-
+            # NDRYSHUAR (26/09/2026, me kerkese te perdoruesit): PARA kishim
+            # ketu nje kontroll qe anashkalonte (s'i shkruante ne
+            # tracking_events) porosite "shume te vjetra", per te mbrojtur
+            # bazen e te dhenave nga mbingarkesa. HEQUR sepse: (1) eshte
+            # burim shtese potencial gabimesh (nje porosi krejt e RE u gjet
+            # qe NUK ishte ruajtur -- ende s'e dime nese ky kontroll ishte
+            # shkaku, por eshte i vetmi vend qe do e kishte anashkaluar), dhe
+          # (2) njesoj si ultra_portal_scrape.py (qe s'e ka pasur KURRE kete
+            # kontroll dhe punon mire), tani BESOJME TERESISHT te pastrimi i
+            # perbashket ne baze te te dhenave (cleanup_old_tracking_events(),
+            # thirrur me poshte nga cleanup_old_events()) per te hequr te
+            # dhenat e vjetra -- shih supabase_schema.sql per shpjegimin e
+            # plote dhe periudhen e "graces" qe u shtua pikerisht per kete
+            # ndryshim (qe nje backfill i sapo-bere te mos qendroje 30 dite
+            # te plota ne baze para se te fshihet).
             push_to_supabase(order_number, kodi, ngjarjet, courier="postman")
             upsert_seen_parcel(postman_id, order_number, statusi, active=not eshte_perfundimtar)
             seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": not eshte_perfundimtar}
