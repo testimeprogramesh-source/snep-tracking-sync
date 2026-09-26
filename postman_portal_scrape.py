@@ -848,6 +848,26 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             ngjarjet = get_order_history_ne_tab_te_re(driver, postman_id)
             eshte_perfundimtar = statusi in STATUSET_PERFUNDIMTARE
 
+            # GJETUR SHKAKU I VERTETE (26/09/2026): nese leximi i historikut
+            # deshton PERKOHESISHT (p.sh. TimeoutException brenda
+            # get_order_history -- faqja e detajeve s'u ngarkua mjaftueshem
+            # shpejt, ~20 sek), ngjarjet=[] (bosh), dhe push_to_supabase()
+            # s'shkruan asgje ("if not rows: return", heshtazi, pa gabim).
+            # PARA, kodi vazhdonte GJITHSESI te thernte upsert_seen_parcel(),
+            # duke e shenuar porosine "e njohur" PERGJITHMONE -- pra nje
+            # deshtim i thjeshte, kalimtar, e linte porosine PA ASNJE te
+            # dhene ne tracking_events, PERGJITHMONE (skanimet e ardhshme
+            # s'e riprovonin me, sepse statusi "i njohur" perputhej me ate
+            # te listes -- e_panryshuar=True). KJO ISHTE SHKAKU I VERTETE i
+            # porosise 3823862 (e re, e sotme) qe mungonte nga baza --
+            # konfirmuar (26/09/2026): edhe pas heqjes se kontrollit te
+            # vjetersise me poshte, akoma s'shfaqej. Tani: NESE historiku
+            # eshte bosh, s'e shenojme fare "te njohur" -- run-i tjeter do
+            # ta RIPROVOJE, derisa te lexohet me sukses.
+            if not ngjarjet:
+                print(f"  Porosia {kodi} (referenca {order_number}): historiku doli BOSH (deshtim kalimtar) -- s'u shenua 'e njohur', do riprovohet run-in tjeter.")
+                continue
+
             # NDRYSHUAR (26/09/2026, me kerkese te perdoruesit): PARA kishim
             # ketu nje kontroll qe anashkalonte (s'i shkruante ne
             # tracking_events) porosite "shume te vjetra", per te mbrojtur
