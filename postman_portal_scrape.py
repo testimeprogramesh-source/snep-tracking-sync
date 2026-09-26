@@ -664,9 +664,6 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
     except NoSuchElementException:
         return []
 
-    lartesia_totale = driver.execute_script("return arguments[0].scrollHeight;", viewport) or 0
-    lartesia_dukshme = driver.execute_script("return arguments[0].clientHeight;", viewport) or 1
-    hapi = max(int(lartesia_dukshme * 0.85), 200)  # mbivendosje e vogel, per te mos humbur rreshta
 
     # SHTUAR (27/09/2026): presim qe overlay-i "duke ngarkuar" te zhduket
     # PARA se te fillojme leximin -- sidomos per FAQEN E PARE, qe lexohet
@@ -681,6 +678,13 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
     except TimeoutException:
         pass
     time.sleep(1.5)
+
+    # NDRYSHUAR (27/09/2026): lartesia matet PAS pritjes (me pare matej kur
+    # grid-i kishte ende vetem 20 rreshta -> faqja e pare lexonte vetem ~33
+    # nga 500), dhe rimatet ne çdo hap te scroll-it me poshte.
+    lartesia_totale = driver.execute_script("return arguments[0].scrollHeight;", viewport) or 0
+    lartesia_dukshme = driver.execute_script("return arguments[0].clientHeight;", viewport) or 1
+    hapi = max(int(lartesia_dukshme * 0.85), 200)  # mbivendosje e vogel, per te mos humbur rreshta
 
     def _eshte_i_plote(q):
         return bool(q.get("displayId")) and bool((q.get("refid") or "").strip())
@@ -712,6 +716,7 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
             if qelizat.get("displayId"):
                 rezultati[row_index] = qelizat
 
+        lartesia_totale = driver.execute_script("return arguments[0].scrollHeight;", viewport) or lartesia_totale
         if pozicioni >= lartesia_totale - lartesia_dukshme:
             break
         pozicioni += hapi
@@ -734,6 +739,7 @@ def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
                     continue
                 if qelizat.get("displayId"):
                     rezultati[row_index] = qelizat
+            lartesia_totale = driver.execute_script("return arguments[0].scrollHeight;", viewport) or lartesia_totale
             if pozicioni >= lartesia_totale - lartesia_dukshme:
                 break
             pozicioni += hapi
