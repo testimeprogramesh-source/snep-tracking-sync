@@ -578,7 +578,10 @@ def _eshte_perditesimi_i_vjeter(raw: str, dite: int = DITE_MAX_SINKRONIZIM) -> b
     """
     if not raw:
         return False
-    for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
+    # NDREQUR (27/09/2026): portali e shfaq daten si "27/09/26 18:23" (viti me
+    # 2 shifra, pa sekonda). Me pare pranohej vetem "27/09/2026 18:23:00",
+    # keshtu qe kontrolli s'funksiononte kurre dhe pakot e vjetra hapeshin kot.
+    for fmt in ("%d/%m/%y %H:%M", "%d/%m/%y", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y"):
         try:
             dt = datetime.strptime(raw.strip(), fmt)
             kufiri = datetime.now() - timedelta(days=dite)
