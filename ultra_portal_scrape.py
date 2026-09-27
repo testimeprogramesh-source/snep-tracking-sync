@@ -79,18 +79,11 @@ SI TA PERDORNI (manualisht, per teste):
   4. Xhironi: python ultra_portal_scrape.py 3797608 3796633 ...
      (numra porosie, JO barkode SN)
 
-SI XHIRON AUTOMATIKISHT (p.sh. nga GitHub Actions, cdo 15 min):
+SI XHIRON AUTOMATIKISHT (GitHub Actions, shih .github/workflows/sync.yml):
   Xhironi PA asnje argument: python ultra_portal_scrape.py
-  Ne kete rast, skripti VETE lexon nga tabela Supabase "orders_to_track"
-  (kolona order_number, ku active = true) dhe kontrollon vetem ato porosi
-  -- nuk ka nevoje t'i jepni numrat ne linjen e komandes. Pasi nje porosi
-  del "Dorezuar", skripti e vendos vete active=false ne ate tabele, qe te
-  mos vazhdoje ta kontrolloje pa nevoje.
-
-  SHTIMI I POROSIVE NE "orders_to_track": per momentin behet manualisht
-  (Supabase -> Table Editor -> orders_to_track -> Insert row, vetem fusha
-  order_number nevojitet). Nese sistemi juaj i postes mund te therrase nje
-  API me vone, kjo mund te automatizohet (shih supabase_schema.sql).
+  Skripti skanon VETE listen e pakove te portalit (nga me e reja), dhe
+  perdor tabelen "ultra_parcels_seen" per te anashkaluar pakot qe s'kane
+  ndryshuar qe nga hera e fundit. Me FULL_SCAN=1 kalon te gjitha faqet.
 
 KU DUHET TE XHIROJE KY SKRIPT: jo brenda bisedes me Claude (s'jam sherbim
 i qendrueshem 24/7) -- duhet nje vend qe ju kontrolloni: nje server i
@@ -117,6 +110,15 @@ from selenium.common.exceptions import (
     TimeoutException,
     ElementNotInteractableException,
     StaleElementReferenceException,
+)
+
+from supabase_helpers import (
+    kerko_me_rikthim,
+    koka_http,
+    url_rest,
+    ne_iso_lokale,
+    push_to_supabase as _push_to_supabase,
+    cleanup_old_events,
 )
 
 
@@ -352,60 +354,13 @@ def get_tracking_events(driver):
 
 
 def _parse_data_ore(raw: str) -> str:
-    """'03/09/2026 12:43:55' -> ISO 8601 me offset Europe/Tirane (+02:00 ne vere)."""
-    dt = datetime.strptime(raw, "%d/%m/%Y %H:%M:%S")
-    dt = dt.replace(tzinfo=timezone(timedelta(hours=2)))  # DST: +1 dimer, +2 vere
-    return dt.isoformat()
+    """'03/09/2026 12:43:55' -> ISO 8601 me offset-in e sakte (+02:00 ne vere, +01:00 ne dimer)."""
+    return ne_iso_lokale(datetime.strptime(raw.strip(), "%d/%m/%Y %H:%M:%S"))
 
 
 def push_to_supabase(order_number: str, barcode: str, events: list):
-    """Upsert ne public.tracking_events permes REST API-t (service_role key)."""
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    rows_by_kyc = {}
-    for e in events:
-        rresht = {
-            "order_number": order_number,
-            "barcode": barcode,
-            "event_time": e["event_time"],
-            "status_label": e["status_label"],
-            "status_tag": e.get("status_tag"),
-            "note": e.get("note"),
-            "handled_by": e.get("handled_by"),
-        }
-        # Postgres hedh gabim ("ON CONFLICT DO UPDATE command cannot affect
-        # row a second time" -> shfaqet si 500 nga PostgREST) nese i njejti
-        # (order_number, event_time, status_label) shfaqet 2+ here NE TE
-        # NJEJTIN xhirim upsert -- p.sh. nese Ultra Post kthen te njejtin
-        # "history item" 2 here (faqosje/duplikim). Prandaj i shpertheme
-        # rreshtat sipas ketij celesi PARA se t'i dergojme -- mbajme te
-        # fundit, qe eshte praktikisht identik gjithsesi.
-        kyc = (rresht["order_number"], rresht["event_time"], rresht["status_label"])
-        rows_by_kyc[kyc] = rresht
-
-    rows = list(rows_by_kyc.values())
-    if not rows:
-        return
-
-    resp = requests.post(
-        f"{supabase_url}/rest/v1/tracking_events",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
-        params={"on_conflict": "order_number,event_time,status_label"},
-        json=rows,
-        timeout=20,
-    )
-    if not resp.ok:
-        # Ruajme trupin e pergjigjes (mesazhi i sakte i gabimit nga Postgres/
-        # PostgREST) qe te shfaqet ne log -- pa kete, "500 Internal Server
-        # Error" vetem s'na thote pse.
-        print(f"  -> Supabase ktheu {resp.status_code}: {resp.text}")
-    resp.raise_for_status()
+    """Upsert ne public.tracking_events (shih supabase_helpers.py) me courier='ultra'."""
+    _push_to_supabase(order_number, barcode, events, courier="ultra")
 
 
 def _lexo_numrin_e_porosise(driver) -> str:
@@ -561,21 +516,17 @@ def fetch_seen_parcels() -> dict:
     vazhduar deri sa te mos kete me rreshta -- keshtu qe GJITHMONE merret
     tabela e PLOTE, sado e madhe te behet ne te ardhmen.
     """
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
     rezultati = {}
     madhesia_faqes = 1000
     fillimi = 0
     while True:
-        resp = requests.get(
-            f"{supabase_url}/rest/v1/ultra_parcels_seen",
-            headers={
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}",
-                "Range-Unit": "items",
-                "Range": f"{fillimi}-{fillimi + madhesia_faqes - 1}",
-            },
+        koka = koka_http(me_json=False)
+        koka["Range-Unit"] = "items"
+        koka["Range"] = f"{fillimi}-{fillimi + madhesia_faqes - 1}"
+        resp = kerko_me_rikthim(
+            requests.get,
+            url_rest("ultra_parcels_seen"),
+            headers=koka,
             params={"select": "barcode,order_number,list_updated_raw,active"},
             timeout=30,
         )
@@ -593,17 +544,10 @@ def fetch_seen_parcels() -> dict:
 
 def upsert_seen_parcel(barcode: str, order_number: str, list_updated_raw: str, active: bool):
     """Upsert 1 rresht ne 'ultra_parcels_seen' (gjendja e brendshme e skanimit)."""
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    resp = requests.post(
-        f"{supabase_url}/rest/v1/ultra_parcels_seen",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
+    resp = kerko_me_rikthim(
+        requests.post,
+        url_rest("ultra_parcels_seen"),
+        headers=koka_http(prefer="resolution=merge-duplicates,return=minimal"),
         params={"on_conflict": "barcode"},
         json=[{
             "barcode": barcode,
@@ -612,44 +556,11 @@ def upsert_seen_parcel(barcode: str, order_number: str, list_updated_raw: str, a
             "active": active,
             "last_synced_at": datetime.now(timezone.utc).isoformat(),
         }],
-        timeout=20,
+        timeout=30,
     )
     if not resp.ok:
         print(f"  -> Supabase (ultra_parcels_seen) ktheu {resp.status_code}: {resp.text}")
     resp.raise_for_status()
-
-
-def cleanup_old_events():
-    """
-    Fshin nga 'tracking_events' te gjitha ngjarjet e nje porosie, NESE
-    ngjarja e saj e FUNDIT (me e reja) eshte me e vjeter se 30 dite -- qe te
-    mos e mbushim kot databazen me porosi te vjetra qe askush s'i kerkon me.
-
-    E gjithe logjika (cila porosi "ka kaluar 30 dite") eshte ne funksionin
-    SQL 'cleanup_old_tracking_events' (shiko supabase_schema.sql) -- ketu
-    thjesht e thirrim permes RPC-se, njesoj si funksionet e tjera te
-    Supabase. Rreshti perkates ne 'ultra_parcels_seen' NUK fshihet -- mbetet
-    aty (active=false, e pandryshuar) qe skanimi i ardhshem te vazhdoje ta
-    ANASHKALOJE pakon e vjeter, ne vend qe ta rizbuloje si "te re" dhe ta
-    rifuse serish ne tracking_events.
-    """
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    resp = requests.post(
-        f"{supabase_url}/rest/v1/rpc/cleanup_old_tracking_events",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-        },
-        json={},
-        timeout=30,
-    )
-    if not resp.ok:
-        print(f"  -> (kujdes: pastrimi i te dhenave te vjetra deshtoi -- {resp.status_code}: {resp.text})")
-    else:
-        print("Pastrimi i porosive mbi 30 dite u krye.")
 
 
 def _eshte_perditesimi_i_vjeter(raw: str, dite: int = DITE_MAX_SINKRONIZIM) -> bool:
@@ -795,6 +706,13 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
                 continue
 
             ngjarjet = get_tracking_events(driver)
+            if not ngjarjet:
+                # Pa ngjarje te lexuara NUK e shenojme pakon "te njohur" --
+                # perndryshe s'riprovohej me kurre (i njejti gabim qe u gjet
+                # te Postman, ku qindra porosi mbeten pa te dhena).
+                print(f"  -> KUJDES: pako {barcode} (porosia {numer_porosie}): s'u lexua asnje ngjarje -- do riprovohet run-in tjeter.")
+                _mbyll_detajet_pakos(driver)
+                continue
             eshte_dorezuar = _eshte_dorezuar(ngjarjet)
 
             push_to_supabase(numer_porosie, barcode, ngjarjet)
@@ -831,55 +749,9 @@ def scan_all_parcels(driver, full_scan: bool = False) -> list:
     return rezultatet
 
 
-def fetch_orders_to_sync() -> list:
-    """
-    Lexon nga Supabase tabelen 'orders_to_track' -- kthen numrat e porosive
-    ende AKTIVE (active = true), qe skripti duhet t'i kontrolloje kete here.
-    Perdoret vetem kur skripti xhirohet PA argumente (mënyra automatike,
-    p.sh. GitHub Actions).
-    """
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    resp = requests.get(
-        f"{supabase_url}/rest/v1/orders_to_track",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-        },
-        params={"active": "is.true", "select": "order_number"},
-        timeout=20,
-    )
-    resp.raise_for_status()
-    return [row["order_number"] for row in resp.json()]
-
-
-def mark_order_status(order_number: str, *, delivered: bool):
-    """
-    Perditeson 'orders_to_track' pas nje sync-i te suksesshem: gjithnje
-    ruan last_synced_at, dhe nese porosia eshte "Dorezuar" e vendos
-    active=false, qe skripti te mos e rikontrolloje me pas kot.
-    """
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    body = {"last_synced_at": datetime.now(timezone.utc).isoformat()}
-    if delivered:
-        body["active"] = False
-
-    resp = requests.patch(
-        f"{supabase_url}/rest/v1/orders_to_track",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal",
-        },
-        params={"order_number": f"eq.{order_number}"},
-        json=body,
-        timeout=20,
-    )
-    resp.raise_for_status()
+# HEQUR (27/09/2026): fetch_orders_to_sync() dhe mark_order_status() --
+# mbetje nga menyra e vjeter me tabelen 'orders_to_track'. S'thirreshin me
+# askund qe kur skripti skanon vete gjithe listen e pakove.
 
 
 def _eshte_dorezuar(events: list) -> bool:
@@ -896,8 +768,8 @@ def sync_one_order(order_number: str, driver=None):
     own_driver = driver is None
     if own_driver:
         driver = login_to_ultra(
-            username=os.environ["ULTRA_USERNAME"],
-            password=os.environ["ULTRA_PASSWORD"],
+            username=os.environ["ULTRA_USERNAME"].strip(),
+            password=os.environ["ULTRA_PASSWORD"].strip(),
         )
     try:
         barcode = find_and_open_parcel_by_order_number(driver, order_number)
@@ -917,8 +789,8 @@ if __name__ == "__main__":
         # per te kontrolluar 1 (ose disa) porosi te caktuara, pa prekur
         # skanimin e plote. E dobishme per debugging.
         driver = login_to_ultra(
-            username=os.environ["ULTRA_USERNAME"],
-            password=os.environ["ULTRA_PASSWORD"],
+            username=os.environ["ULTRA_USERNAME"].strip(),
+            password=os.environ["ULTRA_PASSWORD"].strip(),
         )
         try:
             for numer in numrat:
@@ -931,7 +803,7 @@ if __name__ == "__main__":
             driver.quit()
 
     else:
-        # Menyra AUTOMATIKE (parazgjedhur, p.sh. GitHub Actions çdo 15 min):
+        # Menyra AUTOMATIKE (parazgjedhur, p.sh. GitHub Actions çdo ore):
         # SKANON VETE te gjitha pakot e portalit -- s'ka me nevoje per listen
         # manuale "orders_to_track". Nese ndryshorja FULL_SCAN eshte vendosur
         # (p.sh. nje here ne dite), behet nje skanim i PLOTE (pa u ndalur
@@ -941,8 +813,8 @@ if __name__ == "__main__":
         print(f"Duke skanuar {'TE GJITHA' if full_scan else 'vetem ndryshimet e'} pakot te portali...")
 
         driver = login_to_ultra(
-            username=os.environ["ULTRA_USERNAME"],
-            password=os.environ["ULTRA_PASSWORD"],
+            username=os.environ["ULTRA_USERNAME"].strip(),
+            password=os.environ["ULTRA_PASSWORD"].strip(),
         )
         try:
             rezultatet = scan_all_parcels(driver, full_scan=full_scan)
@@ -953,6 +825,6 @@ if __name__ == "__main__":
 
         if full_scan:
             # Pastrimi behet vetem 1 here ne dite (bashke me skanimin e
-            # plote) -- s'ka nevoje ta xhirojme cdo 15 min, sepse eshte
+            # plote) -- s'ka nevoje ta xhirojme çdo ore, sepse eshte
             # thjesht mirembajtje, jo dicka urgjente.
             cleanup_old_events()

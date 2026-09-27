@@ -505,16 +505,18 @@
   var SUPABASE_URL = 'https://ndctyjkcvcrcwnqsxhae.supabase.co';
   var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kY3R5amtjdmNyY3ducXN4aGFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5MDQ5MTAsImV4cCI6MjEwNTQ4MDkxMH0.ah9TXKmoQ_t29Ip8USNCijsEz3FTKZilrkCdA83aq5A';
 
+  // Rregullat pranojne edhe tekstin PA "ë" -- Postman i shkruan statuset pa
+  // shkronja shqipe (p.sh. "Porosia eshte dorezuar"), Ultra Post me to.
   var STATUS_DOT_RULES = [
-    [/dorëzuar/i, 'success'],
-    [/shpërndarje/i, 'info'],
+    [/dor[ëe]zua/i, 'success'],
+    [/shp[ëe]rndarje/i, 'info'],
     [/pritje/i, 'warn'],
     [/sms|telefonat|thirrje/i, 'neutral'],
   ];
   var TAG_RULES = [
-    [/dështoi|problem|gabim/i, 'danger'],
-    [/shpërndarje/i, 'info'],
-    [/dorëzuar/i, 'success'],
+    [/d[ëe]shtoi|problem|gabim/i, 'danger'],
+    [/shp[ëe]rndarje/i, 'info'],
+    [/dor[ëe]zua/i, 'success'],
   ];
 
   function classify(rules, text, fallback) {
@@ -561,7 +563,7 @@
       body.appendChild(row);
 
       if (ev.note) {
-        var noteCls = /dështoi|problem|gabim/i.test(ev.status_tag || '') ? 't-note danger' : 't-note';
+        var noteCls = /d[ëe]shtoi|problem|gabim/i.test(ev.status_tag || '') ? 't-note danger' : 't-note';
         body.appendChild(el('div', noteCls, ev.note));
       }
       if (ev.handled_by) {

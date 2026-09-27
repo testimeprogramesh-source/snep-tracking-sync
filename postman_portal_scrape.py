@@ -78,7 +78,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import requests
 from selenium import webdriver
@@ -90,6 +90,15 @@ from selenium.common.exceptions import (
     TimeoutException,
     StaleElementReferenceException,
     ElementClickInterceptedException,
+)
+
+from supabase_helpers import (
+    kerko_me_rikthim,
+    koka_http,
+    url_rest,
+    ne_iso_lokale,
+    push_to_supabase,
+    cleanup_old_events,
 )
 
 
@@ -111,20 +120,6 @@ XPATH_BUTONI_FILTRO = "//button[contains(., 'Filtro')]"
 SELEKTOR_RRESHT_GRID = "div.ag-row"
 SELEKTOR_QELIZA = "div.ag-cell"
 
-# ZBULUAR (25/09/2026, inspektuar live ne Chrome): faqja e listes KA nje
-# filter te vertete date -- "Prej datës:" / "Deri me:" -- jo thjesht nje
-# shfaqje dekorative. E testuam direkt: nga 9834 porosi GJITHSEJ (qe nga
-# fillimi i sistemit), filtri i reduktoi ne VETEM 721 (per periudhen
-# gusht-shtator 2026). Perdorim kete filter qe skanimi TE MOS kaloje
-# gjithe historikun (9800+ porosi, shumica krejtesisht te panevojshme),
-# por VETEM porosite e fundit -- shume me shpejte, dhe pikerisht ajo qe
-# duhet (klienti konfirmoi: "nuk me duhen te gjitha, dua vetem gusht e
-# shtator").
-XPATH_FUSHAT_DATE = "//input[@placeholder='Select date']"
-SEL_KALENDAR_PARA = "button.ant-picker-header-prev-btn"
-DITE_PRAPA_PARAZGJEDHUR = 60  # ~2 muaj mbrapa -- kap rehat "muajin e kaluar + ky muaj";
-                              # mund te ndryshohet me environment variable DITE_PRAPA_SKANIM
-
 # ZBULUAR (25/09/2026, inspektuar live me JavaScript ne DOM-in real): AG
 # Grid e VIRTUALIZON listen -- edhe kur "faqja" ka 500 rreshta (madhesia
 # maksimale), ne DOM ne çdo moment gjenden VETEM rreshtat afer pjeses
@@ -141,7 +136,6 @@ MAX_FAQE_SKANIM = 300  # (25/09/2026) rritur nga 150 -- rezerve sigurie NESE
 # te 3000. Kur madhesia eshte 500 (rasti normal), 300 faqe s'arrihen kurre
 # (9834 / 500 = ~20 faqe mjaftojne), keshtu qe s'kushton kohe shtese.
 STREAK_NDALO_SKANIMIN = 50
-DITE_MAX_SINKRONIZIM = 30
 
 # Statuset e MUNDSHME (te verifikuara live nga dropdown-i "Statusi") --
 # perdoren per te ndare "statusDescription" (statusi + emri i agjentit, te
@@ -157,6 +151,8 @@ STATUSET_E_MUNDSHME = [
     "Në pritje për tërheqje",
     "Në pritje",
     "Kthyer",
+    "Kthim ndrrimi",
+    "Ne Depon për kthim",
 ]
 # Statuset "PERFUNDIMTARE" -- porosia s'ka pse te rikontrollohet me pas.
 STATUSET_PERFUNDIMTARE = {"Dorëzuar", "Refuzuar", "Kthyer"}
@@ -285,9 +281,16 @@ def _nxirr_statusin_nga_rreshti(statusi_raw: str) -> str:
     agjentit TE NGJITUR pa hapesire (p.sh. "•Në transportArdian Roka") --
     e ndajme duke kerkuar CILI status i njohur (nga STATUSET_E_MUNDSHME)
     eshte "prefiks" i tekstit (pas heqjes se "•" fillestare).
-    Kthen statusin e njohur, ose gjithe tekstin e paster nese asnje s'perputhet.
+    Kthen statusin e njohur, ose rreshtin e pare te tekstit nese asnje s'perputhet.
+
+    NDREQUR (27/09/2026): Selenium e kthen tekstin me statusin dhe agjentin
+    ne DY rreshta ("Kthim ndrrimi\nFlorent Bislimi"). Per statuset qe s'jane
+    ne liste, me pare ruhej edhe emri i agjentit si pjese e statusit -- keshtu
+    qe nese ndryshonte vetem agjenti, porosia dukej "e ndryshuar" dhe rihapej
+    kot. Tani mbajme vetem rreshtin e pare.
     """
-    i_paster = (statusi_raw or "").lstrip("•").strip()
+    i_paster = (statusi_raw or "").strip().lstrip("•").strip()
+    i_paster = i_paster.splitlines()[0].strip() if i_paster else ""
     for status in STATUSET_E_MUNDSHME:
         if i_paster.startswith(status):
             return status
@@ -322,17 +325,16 @@ def _id_numerik_nga_kodi(kodi: str) -> str:
 
 
 def _parse_data_ore(raw: str):
-    """'24.09.2026 16:25' -> ISO 8601 me offset Europe/Prishtine (+02:00 ne vere, njesoj si Shqiperia)."""
-    dt = datetime.strptime(raw.strip(), "%d.%m.%Y %H:%M")
-    dt = dt.replace(tzinfo=timezone(timedelta(hours=2)))
-    return dt.isoformat()
+    """'24.09.2026 16:25' -> ISO 8601 me offset-in e sakte (+02:00 ne vere, +01:00 ne dimer)."""
+    return ne_iso_lokale(datetime.strptime(raw.strip(), "%d.%m.%Y %H:%M"))
 
 
 def get_order_history(driver, postman_id: str) -> list:
     """
-    Shkon direkt ne URL-ne e detajeve (order-details?id=...) dhe nxjerr
-    "HISTORIKUN E POROSISE" -- filtron ngjarjet "teknike" (ndryshim peshe/
-    dimensioni), qe s'jane te dobishme per klientin.
+    Nxjerr "HISTORIKUN E POROSISE" nga faqja e detajeve (order-details?id=...)
+    qe duhet te jete TASHME e hapur -- perdorni get_order_history_ne_tab_te_re().
+    Filtron ngjarjet "teknike" (ndryshim peshe/dimensioni). Kthen [] nese
+    historiku s'u shfaq brenda 20 sekondave.
     """
     wait = WebDriverWait(driver, 20)
 
@@ -394,94 +396,22 @@ def get_order_history_ne_tab_te_re(driver, postman_id: str) -> list:
         driver.switch_to.window(tab_kryesor)
 
 
-def _kerko_me_rikthim(metoda, url, tentativa_max=3, **kwargs):
-    """
-    Njesoj si requests.post(...)/requests.get(...), por RIPROVON automatikisht
-    (deri "tentativa_max" here, me nje pauze qe rritet mes tentativave) nese
-    lidhja me Supabase-in DESHTON PERKOHESISHT (timeout, gabim rrjeti).
-    ZBULUAR (26/09/2026, run i deshtuar ne GitHub Actions): nje skanim i
-    gjate (qindra thirrje HTTP rradhazi drejt Supabase) here pas here has
-    NJE lidhje qe ngec per pak sekonda (ReadTimeoutError) -- pa riprovim,
-    kjo e ndalonte GJITHE skanimin, çka eshte humbje e panevojshme, sepse
-    ngjarjet tashme ishin lexuar nga faqja e Postman-it (pjesa e ngadalte
-    dhe e brishte), thjesht SHKRIMI ne Supabase deshtoi per nje moment.
-    """
-    fundit_gabim = None
-    for tentativa in range(1, tentativa_max + 1):
-        try:
-            return metoda(url, **kwargs)
-        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
-            fundit_gabim = e
-            if tentativa < tentativa_max:
-                print(f"  (kujdes: lidhja me Supabase deshtoi perkohesisht, tentativa {tentativa}/{tentativa_max} -- riprovojme...)")
-                time.sleep(3 * tentativa)
-    raise fundit_gabim
-
-
-def push_to_supabase(order_number: str, barcode: str, events: list, courier: str = "postman"):
-    """Upsert ne public.tracking_events (e njejta tabele qe perdor Ultra Post, e dalluar nga 'courier')."""
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    rows_by_kyc = {}
-    for e in events:
-        rresht = {
-            "order_number": order_number,
-            "courier": courier,
-            "barcode": barcode,
-            "event_time": e["event_time"],
-            "status_label": e["status_label"],
-            "status_tag": e.get("status_tag"),
-            "note": e.get("note"),
-            "handled_by": e.get("handled_by"),
-        }
-        kyc = (rresht["order_number"], rresht["event_time"], rresht["status_label"])
-        rows_by_kyc[kyc] = rresht
-
-    rows = list(rows_by_kyc.values())
-    if not rows:
-        return
-
-    resp = _kerko_me_rikthim(
-        requests.post,
-        f"{supabase_url}/rest/v1/tracking_events",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
-        params={"on_conflict": "order_number,event_time,status_label"},
-        json=rows,
-        timeout=30,
-    )
-    if not resp.ok:
-        print(f"  -> Supabase ktheu {resp.status_code}: {resp.text}")
-    resp.raise_for_status()
-
-
 def fetch_seen_parcels() -> dict:
     """
-    Lexon TE GJITHE tabelen 'postman_parcels_seen' (ne faqe, per te shmangur
-    kufirin e 1000 rreshtave te Supabase -- gabimi qe e zbuluam dhe e
-    rregulluam tek ultra_portal_scrape.py; ketu e kemi drejt qe nga fillimi).
+    Lexon TE GJITHE tabelen 'postman_parcels_seen' ne faqe prej 1000 rreshtash
+    (Supabase kthen maksimumi 1000 rreshta per kerkese).
     """
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
     rezultati = {}
     madhesia_faqes = 1000
     fillimi = 0
     while True:
-        resp = _kerko_me_rikthim(
+        koka = koka_http(me_json=False)
+        koka["Range-Unit"] = "items"
+        koka["Range"] = f"{fillimi}-{fillimi + madhesia_faqes - 1}"
+        resp = kerko_me_rikthim(
             requests.get,
-            f"{supabase_url}/rest/v1/postman_parcels_seen",
-            headers={
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}",
-                "Range-Unit": "items",
-                "Range": f"{fillimi}-{fillimi + madhesia_faqes - 1}",
-            },
+            url_rest("postman_parcels_seen"),
+            headers=koka,
             params={"select": "postman_id,order_number,list_status_raw,active"},
             timeout=30,
         )
@@ -497,18 +427,10 @@ def fetch_seen_parcels() -> dict:
 
 
 def upsert_seen_parcel(postman_id: str, order_number: str, status_raw: str, active: bool):
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    resp = _kerko_me_rikthim(
+    resp = kerko_me_rikthim(
         requests.post,
-        f"{supabase_url}/rest/v1/postman_parcels_seen",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
+        url_rest("postman_parcels_seen"),
+        headers=koka_http(prefer="resolution=merge-duplicates,return=minimal"),
         params={"on_conflict": "postman_id"},
         json=[{
             "postman_id": postman_id,
@@ -524,128 +446,11 @@ def upsert_seen_parcel(postman_id: str, order_number: str, status_raw: str, acti
     resp.raise_for_status()
 
 
-def cleanup_old_events():
-    """Thirret 1 here ne dite (full_scan) -- e njejta pastrimi si Ultra Post (funksioni SQL eshte i perbashket)."""
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-
-    resp = _kerko_me_rikthim(
-        requests.post,
-        f"{supabase_url}/rest/v1/rpc/cleanup_old_tracking_events",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-        },
-        json={},
-        timeout=30,
-    )
-    if not resp.ok:
-        print(f"  -> (kujdes: pastrimi i te dhenave te vjetra deshtoi -- {resp.status_code}: {resp.text})")
-    else:
-        print("Pastrimi i porosive mbi 30 dite u krye (i perbashket per Ultra Post + Postman).")
-
-
-def _kliko_diten_ne_kalendar(driver, wait, data_target):
-    """
-    Brenda kalendarit TASHME TE HAPUR (Ant Design DatePicker), lundron
-    mbrapa muaj-pas-muaji (kalendari hapet gjithmone ne MUAJIN AKTUAL) dhe
-    kliko diten e sakte.
-    ZBULUAR (25/09/2026, testuar live): te shkruarit e tekstit direkt ne
-    fushe (p.sh. "2026-08-01") pati sjellje jo te qendrueshme -- "Escape"
-    e ANULON ndryshimin (kthehet te vlera e meparshme), "Enter" ndonjehere
-    le kalendarin te hapur. Klikimi i vertete i dites ne kalendar eshte
-    METODA E QENDRUESHME, e konfirmuar live.
-    """
-    sot = datetime.now(timezone(timedelta(hours=2))).date()
-    muaj_mbrapa = (sot.year - data_target.year) * 12 + (sot.month - data_target.month)
-    if muaj_mbrapa > 0:
-        butoni_mbrapa = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, SEL_KALENDAR_PARA)))
-        for _ in range(muaj_mbrapa):
-            butoni_mbrapa.click()
-            time.sleep(0.15)
-
-    # "ant-picker-cell-in-view" dallon diten e MUAJIT TE SHFAQUR nga ditet
-    # gri te muajit fqinj (qe mund te kene te njejtin numer, p.sh. "30" ne
-    # fund te nje muaji 31-ditor) -- konfirmuar live ne DOM.
-    # ZBULUAR (run i deshtuar ne GitHub Actions): duhet klikuar VETE div-i
-    # ".ant-picker-cell-inner" (brenda <td>), JO vete <td>-ja -- Selenium
-    # merr "element click intercepted" nese klikojme <td>-ne, sepse pika e
-    # klikimit "kapet" ne fakt nga div-i i saj i brendshem.
-    dita_xpath = (
-        "//td[contains(@class,'ant-picker-cell-in-view')]"
-        f"/div[contains(@class,'ant-picker-cell-inner')][normalize-space(text())='{data_target.day}']"
-    )
-    dita_el = wait.until(EC.element_to_be_clickable((By.XPATH, dita_xpath)))
-    try:
-        dita_el.click()
-    except ElementClickInterceptedException:
-        # ZBULUAR (run i deshtuar ne GitHub Actions): nese e para fushe
-        # ("Prej datës") sapo u mbyll, kalendari i saj mund te jete ende
-        # ne "animacion mbylljeje" (fade-out) teksa hapim te dytin ("Deri
-        # me") -- per nje çast te dy kalendaret jane ne DOM, njeri sipas
-        # tjetrit, dhe klikimi normal "kapet" nga qeliza e kalendarit te
-        # VJETER (te njejtin lloj elementi -- "ant-picker-cell-inner").
-        # Klikimi permes JavaScript-it anashkalon kete, sepse s'i intereson
-        # cili element eshte "sipër" vizualisht.
-        driver.execute_script("arguments[0].click();", dita_el)
-
-    # Presim qe VETE paneli i kalendarit te zhduket krejtesisht nga DOM-i
-    # PARA se te vazhdojme te fusha tjeter -- kjo eshte zgjidhja rrenjesore
-    # per problemin e mesiperm (jo vetem nje "patch" per simptomen).
-    try:
-        WebDriverWait(driver, 5).until(
-            EC.invisibility_of_element_located((By.CSS_SELECTOR, ".ant-picker-dropdown"))
-        )
-    except TimeoutException:
-        pass
-
-
-def _vendos_filtrin_e_dates(driver, wait, dite_prapa: int) -> bool:
-    """
-    Vendos filtrin "Prej datës" / "Deri me" ne faqen e listes se porosive
-    te Postman-it, qe skanimi TE MOS kaloje krejt historikun (9800+ porosi
-    qe nga fillimi i sistemit), por VETEM porosite e "dite_prapa" diteve te
-    fundit. Shih shenimin tek XPATH_FUSHAT_DATE me siper per detaje.
-    Kthen True nese filtri u vendos me sukses, False nese jo (rast i
-    rralle -- p.sh. faqja e ka ndryshuar dizajnin) -- ne ate rast vazhdojme
-    GJITHESI (thjesht do te skanoje me shume porosi se sa duhet).
-    """
-    sot = datetime.now(timezone(timedelta(hours=2))).date()
-    nga = sot - timedelta(days=dite_prapa)
-
-    try:
-        fushat = driver.find_elements(By.XPATH, XPATH_FUSHAT_DATE)
-        if len(fushat) < 2:
-            print("  (kujdes: s'u gjeten fushat e filtrit te dates -- vazhdojme PA filter, do te skanohet gjithe historiku)")
-            return False
-
-        fushat[0].click()
-        _kliko_diten_ne_kalendar(driver, wait, nga)
-
-        # rilexo fushat -- DOM-i mund te jete rifreskuar pas klikimit te dites
-        fushat = driver.find_elements(By.XPATH, XPATH_FUSHAT_DATE)
-        fushat[1].click()
-        _kliko_diten_ne_kalendar(driver, wait, sot)
-
-        btn_filtro = wait.until(EC.element_to_be_clickable((By.XPATH, XPATH_BUTONI_FILTRO)))
-        btn_filtro.click()
-        time.sleep(1.5)
-        print(f"  (filtri i dates u vendos: nga {nga.isoformat()} deri {sot.isoformat()})")
-        return True
-    except Exception as e:
-        print(f"  (kujdes: s'u vendos dot filtri i dates -- {e} -- vazhdojme PA filter)")
-        # SIGURI: nese diçka deshtoi ne MES te vendosjes se filtrit (p.sh.
-        # fusha e pare u vendos, e dyta jo), rifreskojme faqen nga e para,
-        # qe te mos mbetemi ne nje gjendje "gjysem-filtruar" te papritur --
-        # me mire pa filter fare (skanon me shume, por sakte) se sa filter
-        # i gabuar (mund te humbase porosi pa e kuptuar).
-        try:
-            driver.get(URL_LISTA_POROSIVE)
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
-        except Exception:
-            pass
-        return False
+# HEQUR (27/09/2026): filtri i dates ("Prej datës" / "Deri me") dhe klikimi
+# ne kalendar. Ne çdo run te GitHub Actions deshtonte ("s'u vendos dot filtri
+# i dates -- vazhdojme PA filter"), humbte ~20 sekonda dhe rifreskonte faqen.
+# S'nevojitet: lista eshte e renditur nga porosia me e re, keshtu qe skanimi
+# i shpejte i gjen porosite e reja qe ne faqen e pare.
 
 
 def _mblidh_rreshtat_e_faqes_me_scroll(driver) -> list:
@@ -871,12 +676,10 @@ def _kliko_faqen_tjeter(driver) -> bool:
         return False
 
 
-def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) -> list:
+def scan_all_parcels(driver, full_scan: bool = False) -> list:
     """
     Skanon porosite e portalit te Postman (njesoj si scan_all_parcels() ne
-    ultra_portal_scrape.py), por VETEM ato te "dite_prapa" diteve te fundit
-    (shih _vendos_filtrin_e_dates me siper -- ndryshe do te kalonim
-    krejt historikun, 9800+ porosi, shumica krejtesisht te panevojshme).
+    ultra_portal_scrape.py), faqe pas faqeje, nga me e reja te me e vjetra.
     Per çdo porosi:
       - Nese eshte E RE (s'e kemi pare kurre) OSE STATUSI ka ndryshuar qe nga
         hera e fundit -> hap detajet, nxjerr historikun, ruaj ne Supabase.
@@ -885,19 +688,12 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
     pare per "streak", per te kapur çdo porosi qe skanimi i shpejte mund ta
     kete "harruar".
     """
-    if dite_prapa is None:
-        dite_prapa = int(os.environ.get("DITE_PRAPA_SKANIM", DITE_PRAPA_PARAZGJEDHUR))
-
     seen = fetch_seen_parcels()
     rezultatet = []
     wait = WebDriverWait(driver, 20)
 
     driver.get(URL_LISTA_POROSIVE)
     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
-    # RENDESISHME: filtri i dates PARA madhesise se faqes -- ne kete renditje
-    # e testuam live dhe funksionoi sakte (klikimi i "Filtro" e rifreskon
-    # listen, dhe madhesia e faqes mbetet e vendosur nga hapi tjeter).
-    _vendos_filtrin_e_dates(driver, wait, dite_prapa)
     _vendos_madhesine_maksimale_faqes(driver, wait)
 
     streak_te_panevojshme = 0
@@ -913,7 +709,8 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
         nr_pa_referenca = 0
         nr_te_njohura = 0
         for qelizat in rreshtat_te_dhena:
-            kodi = qelizat.get("displayId", "")
+            kodi = (qelizat.get("displayId") or "").strip()
+            kodi = kodi.splitlines()[0].strip() if kodi else ""
             postman_id = _id_numerik_nga_kodi(kodi)
             order_number = qelizat.get("refid", "").strip()
             statusi_raw = qelizat.get("statusDescription", "")
@@ -943,49 +740,20 @@ def scan_all_parcels(driver, full_scan: bool = False, dite_prapa: int = None) ->
             ngjarjet = get_order_history_ne_tab_te_re(driver, postman_id)
             eshte_perfundimtar = statusi in STATUSET_PERFUNDIMTARE
 
-            # GJETUR SHKAKU I VERTETE (26/09/2026): nese leximi i historikut
-            # deshton PERKOHESISHT (p.sh. TimeoutException brenda
-            # get_order_history -- faqja e detajeve s'u ngarkua mjaftueshem
-            # shpejt, ~20 sek), ngjarjet=[] (bosh), dhe push_to_supabase()
-            # s'shkruan asgje ("if not rows: return", heshtazi, pa gabim).
-            # PARA, kodi vazhdonte GJITHSESI te thernte upsert_seen_parcel(),
-            # duke e shenuar porosine "e njohur" PERGJITHMONE -- pra nje
-            # deshtim i thjeshte, kalimtar, e linte porosine PA ASNJE te
-            # dhene ne tracking_events, PERGJITHMONE (skanimet e ardhshme
-            # s'e riprovonin me, sepse statusi "i njohur" perputhej me ate
-            # te listes -- e_panryshuar=True). KJO ISHTE SHKAKU I VERTETE i
-            # porosise 3823862 (e re, e sotme) qe mungonte nga baza --
-            # konfirmuar (26/09/2026): edhe pas heqjes se kontrollit te
-            # vjetersise me poshte, akoma s'shfaqej. Tani: NESE historiku
-            # eshte bosh, s'e shenojme fare "te njohur" -- run-i tjeter do
-            # ta RIPROVOJE, derisa te lexohet me sukses.
+            # Nese historiku s'u lexua (faqja e detajeve s'u ngarkua ne kohe),
+            # NUK e shenojme porosine "te njohur" -- perndryshe s'riprovohej
+            # me kurre dhe mbetej pergjithmone pa te dhena ne tracking_events.
             if not ngjarjet:
                 print(f"  Porosia {kodi} (referenca {order_number}): historiku doli BOSH (deshtim kalimtar) -- s'u shenua 'e njohur', do riprovohet run-in tjeter.")
                 continue
 
-            # NDRYSHUAR (26/09/2026, me kerkese te perdoruesit): PARA kishim
-            # ketu nje kontroll qe anashkalonte (s'i shkruante ne
-            # tracking_events) porosite "shume te vjetra", per te mbrojtur
-            # bazen e te dhenave nga mbingarkesa. HEQUR sepse: (1) eshte
-            # burim shtese potencial gabimesh (nje porosi krejt e RE u gjet
-            # qe NUK ishte ruajtur -- ende s'e dime nese ky kontroll ishte
-            # shkaku, por eshte i vetmi vend qe do e kishte anashkaluar), dhe
-          # (2) njesoj si ultra_portal_scrape.py (qe s'e ka pasur KURRE kete
-            # kontroll dhe punon mire), tani BESOJME TERESISHT te pastrimi i
-            # perbashket ne baze te te dhenave (cleanup_old_tracking_events(),
-            # thirrur me poshte nga cleanup_old_events()) per te hequr te
-            # dhenat e vjetra -- shih supabase_schema.sql per shpjegimin e
-            # plote dhe periudhen e "graces" qe u shtua pikerisht per kete
-            # ndryshim (qe nje backfill i sapo-bere te mos qendroje 30 dite
-            # te plota ne baze para se te fshihet).
+            # Çdo porosi shkruhet ne tracking_events (edhe e vjetra) -- porosite
+            # e vjetra i heq funksioni SQL cleanup_old_tracking_events().
             push_to_supabase(order_number, kodi, ngjarjet, courier="postman")
             upsert_seen_parcel(postman_id, order_number, statusi, active=not eshte_perfundimtar)
             seen[postman_id] = {"order_number": order_number, "list_status_raw": statusi, "active": not eshte_perfundimtar}
             rezultatet.append((order_number, postman_id, ngjarjet))
             print(f"  Porosia {kodi} (referenca {order_number}): {len(ngjarjet)} ngjarje u sinkronizuan ({statusi}).")
-            # SHENIM: falë tab-it te ri (get_order_history_ne_tab_te_re), lista
-            # dhe faqja/pagination-i i saj NUK preken fare -- s'ka nevoje te
-            # rikthehemi ose te riklikojme asgje ketu.
 
         print(f"  (faqja {faqe_nr}: {nr_te_njohura} te njohura e te pandryshuara, {nr_pa_referenca} pa kod/referencë -- u anashkaluan)")
 
@@ -1020,27 +788,42 @@ def sync_one_order(order_number: str, driver=None):
     try:
         wait = WebDriverWait(driver, 20)
         driver.get(URL_LISTA_POROSIVE)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
 
         fusha = wait.until(EC.element_to_be_clickable((By.XPATH, XPATH_FUSHA_KERKIMI)))
         fusha.clear()
         fusha.send_keys(order_number)
         driver.find_element(By.XPATH, XPATH_BUTONI_FILTRO).click()
 
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)))
-        time.sleep(0.8)  # nje pauze e vogel per t'u siguruar qe grid-i eshte rifreskuar
+        # NDREQUR (27/09/2026): me pare lexohej rreshti i pare menjehere pas
+        # klikimit "Filtro" -- mund te ishte ende rreshti i VJETER (para
+        # filtrimit), pra nje porosi tjeter. Tani presim deri sa rreshti i
+        # pare te kete pikerisht kete referencë.
+        def _rreshti_i_porosise(d):
+            for rresht in d.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID):
+                try:
+                    q = _lexo_qelizat_rreshtit(rresht)
+                except StaleElementReferenceException:
+                    return False
+                if q.get("refid") == order_number and q.get("displayId"):
+                    return q
+            return False
 
-        rreshtat = driver.find_elements(By.CSS_SELECTOR, SELEKTOR_RRESHT_GRID)
-        if not rreshtat:
+        try:
+            qelizat = WebDriverWait(driver, 15).until(_rreshti_i_porosise)
+        except TimeoutException:
             print(f"Porosia {order_number}: NUK U GJET asnje rezultat.")
             return []
 
-        qelizat = _lexo_qelizat_rreshtit(rreshtat[0])
         kodi = qelizat.get("displayId", "")
         postman_id = _id_numerik_nga_kodi(kodi)
         statusi = _nxirr_statusin_nga_rreshti(qelizat.get("statusDescription", ""))
         print(f"U gjet: {kodi} (id={postman_id}), statusi: {statusi}")
 
-        ngjarjet = get_order_history(driver, postman_id)
+        # NDREQUR (27/09/2026): me pare thirrej get_order_history() pa hapur
+        # fare faqen e detajeve -- driver-i ishte ende te lista, keshtu qe
+        # historiku s'gjendej kurre dhe testi manual kthente gjithmone 0 ngjarje.
+        ngjarjet = get_order_history_ne_tab_te_re(driver, postman_id)
         for e in ngjarjet:
             print(f"  {e['event_time']}: {e['status_label']} ({e.get('handled_by')})")
 
