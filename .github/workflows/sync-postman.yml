@@ -39,18 +39,11 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # RRITUR (25/09/2026, nga 180 ne 350): backfill-i i pare i Postman
-    # duhet te hape faqen e detajeve NJE-NGA-NJE per ~9834 porosi (shumica
-    # kurre s'jane pare me pare), gje qe ne praktike mori me shume se 3 ore
-    # dhe u ndal nga vete GitHub Actions (timeout), JO nga nje gabim ne
-    # kod -- shih "Error: The operation was canceled." ne log. 350 min
-    # (~5.8 ore) eshte pothuajse maksimumi i lejuar nga GitHub (360 min).
-    # RRUAJTJA E PROGRESIT: çdo porosi e perpunuar (qofte e shkruar ne
-    # tracking_events, qofte thjesht e shenuar "shume e vjeter") ruhet
-    # MENJEHERE ne postman_parcels_seen -- pra edhe nese run-i ndalet nga
-    # timeout-i, progresi deri atehere s'humbet: run-i tjeter e vazhdon
-    # aty ku e la, s'e rifillon nga zero.
-    timeout-minutes: 650
+    # 350 min: GitHub i ndal gjithsesi punet pas 6 oresh (360 min), keshtu
+    # qe nje vlere me e madhe (p.sh. 650) s'ka efekt. Skanimi i plote ditor
+    # tani zgjat ~35 min; progresi ruhet porosi pas porosie, keshtu qe edhe
+    # nese nje run nderpritet, run-i tjeter vazhdon aty ku mbeti.
+    timeout-minutes: 350
 
     steps:
       - name: Merr kodin e repository-t
