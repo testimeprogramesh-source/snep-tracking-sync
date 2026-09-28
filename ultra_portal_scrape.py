@@ -155,7 +155,7 @@ SELEKTOR_BUTONI_MBYLL_DETAJET = (
 )
 MAX_FAQE_SKANIM = 150       # kufi sigurie -- s'kapërcejmë kurrë kaq shumë faqe (mbrojtje kundër loop-esh të pafundme)
 STREAK_NDALO_SKANIMIN = 50  # ne skanim JO te plote: ndalo pasi te hasesh kaq rreshta rradhazi tashme te njohur/te mbyllur/te pandryshuar
-DITE_MAX_SINKRONIZIM = 30   # asnje pako qe s'ka pasur azhurnim ("Perditesuar Me") prej me shume se kaq ditesh s'sinkronizohet fare
+DITE_MAX_SINKRONIZIM = 180  # 6 muaj (28/09/2026, me pare 30) -- pako pa azhurnim ("Perditesuar Me") prej me shume se kaq ditesh s'sinkronizohet; njesoj si pastrimi SQL (180 dite)
 
 # ------------------------------------------------------------------
 # 3) SELEKTORET E SEKSIONIT "GJURMIMI" -- VERIFIKUAR LIVE (3 pako te
